@@ -134,6 +134,7 @@ function createPopup() {
     show: false,
     frame: false,
     thickFrame: false,
+    roundedCorners: false,
     focusable: false,
     resizable: false,
     movable: true,
@@ -215,10 +216,6 @@ function openSettings() {
     settingsWin.focus();
     return;
   }
-  // Hide popup while settings is open — prevents settings' inactive title bar
-  // showing through the popup's transparent edge when focus moves elsewhere
-  if (popupWin && !popupWin.isDestroyed()) popupWin.hide();
-
   settingsWin = new BrowserWindow({
     width: 520, height: 620,
     minWidth: 460, minHeight: 520,
@@ -473,10 +470,7 @@ ipcMain.on('popup-ready', e => {
 ipcMain.on('refresh', () => triggerRefresh());
 
 ipcMain.on('open-settings', () => openSettings());
-ipcMain.on('show-context-menu', () => {
-  if (popupWin && !popupWin.isDestroyed()) popupWin.hide();
-  tray.popUpContextMenu(buildContextMenu());
-});
+ipcMain.on('show-context-menu', () => tray.popUpContextMenu(buildContextMenu()));
 
 ipcMain.on('settings-ready', e => {
   // Strip accounts (with encryptedKey) from the settings object (LOW-3)
