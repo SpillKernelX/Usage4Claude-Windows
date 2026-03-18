@@ -43,6 +43,7 @@ app.on('second-instance', () => {
 
 app.whenReady().then(async () => {
   app.setAppUserModelId('com.usage4claude.app');
+  nativeTheme.themeSource = config.get('theme') || 'system';
   await createTray();
   scheduleRefresh(500);           // initial fetch
   if (config.get('checkUpdates')) checkUpdates();
@@ -494,6 +495,7 @@ ipcMain.on('save-settings', (_e, { settings: newSettings, accounts }) => {
   config.set('launchAtLogin', newSettings.launchAtLogin);
   app.setLoginItemSettings({ openAtLogin: newSettings.launchAtLogin });
 
+  nativeTheme.themeSource = newSettings.theme || 'system';
   clearCache(); // invalidate icon cache when display settings may have changed (H2)
   updateTrayIcon(); // apply new display mode immediately without waiting for network
   if (settingsWin && !settingsWin.isDestroyed()) settingsWin.close();
