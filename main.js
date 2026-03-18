@@ -133,6 +133,7 @@ function createPopup() {
     width: 336, height: 480,
     show: false,
     frame: false,
+    thickFrame: false,
     resizable: false,
     movable: true,
     alwaysOnTop: true,
