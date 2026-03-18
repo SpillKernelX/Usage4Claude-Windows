@@ -4,7 +4,7 @@ A Windows system tray app that monitors your Claude AI subscription quota in rea
 
 > **Windows port of [f-is-h/Usage4Claude](https://github.com/f-is-h/Usage4Claude)** — the original macOS menu bar app by [@f-is-h](https://github.com/f-is-h). All credit for the concept, design, and API research goes to them.
 
-![Tray icon showing usage ring](issues/our%20popup.jpeg)
+![Tray icon showing usage ring](docs/preview.jpeg)
 
 ---
 
