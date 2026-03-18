@@ -134,6 +134,7 @@ function createPopup() {
     show: false,
     frame: false,
     thickFrame: false,
+    focusable: false,
     resizable: false,
     movable: true,
     alwaysOnTop: true,
@@ -147,15 +148,6 @@ function createPopup() {
     },
   });
   popupWin.loadFile(path.join(__dirname, 'src/popup.html'));
-
-  // Block WM_NCACTIVATE (0x0086) — prevents Windows DWM from drawing the
-  // inactive title bar on the transparent frameless window when focus moves away
-  popupWin.hookWindowMessage(0x0086, () => {
-    popupWin.setEnabled(false);
-    setTimeout(() => { if (popupWin && !popupWin.isDestroyed()) popupWin.setEnabled(true); }, 100);
-  });
-
-  // Popup stays open until explicitly closed via tray click or settings open
   popupWin.on('closed', () => { popupWin = null; });
 }
 
@@ -168,7 +160,6 @@ function togglePopup() {
   }
   positionPopup();
   popupWin.show();
-  popupWin.focus();
   sendStateToPopup();
 }
 

@@ -131,13 +131,16 @@ When the popup loses focus (user clicks elsewhere), a gray Windows title bar/chr
 
 **Root cause**: Windows DWM draws non-client area (caption bar) on transparent frameless windows when they become inactive. The `WM_NCACTIVATE` hook approach is correct in theory but the `setEnabled` trick isn't fully suppressing it in Electron 35.
 
-**Things to try next**:
-- Return a specific value from the `hookWindowMessage` callback (Electron 35 may handle return values differently)
+**Things tried (all failed)**:
+1. `thickFrame: false`
+2. `hookWindowMessage(0x0086)` with `setEnabled(false/true)` workaround
+3. `focusable: false` — window can never become inactive so WM_NCACTIVATE never fires (current attempt)
+
+**Remaining things to try if focusable:false still fails**:
 - Try `win.setBackgroundColor('#00000000')` explicitly
-- Try replacing `transparent: true` with a workaround (solid bg + CSS clip)
+- Try replacing `transparent: true` with a solid bg workaround
 - Try `type: 'toolbar'` BrowserWindow option (sets WS_EX_TOOLWINDOW)
-- Try handling `WM_NCPAINT` (0x0085) in addition to `WM_NCACTIVATE`
-- Consider using `win.setIgnoreMouseEvents(false)` + `win.blur()` approach
+- Try handling `WM_NCPAINT` (0x0085)
 
 ### Multi-account display
 - Account switching works but requires a full refresh
