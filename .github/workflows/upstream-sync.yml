@@ -1,0 +1,114 @@
+name: Upstream Sync Check
+
+on:
+  schedule:
+    - cron: '0 8 * * *'   # daily at 8am UTC
+  workflow_dispatch:        # allow manual trigger from Actions tab
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch upstream release info
+        id: upstream
+        run: |
+          RELEASE=$(curl -s https://api.github.com/repos/f-is-h/Usage4Claude/releases/latest)
+          TAG=$(echo "$RELEASE" | jq -r '.tag_name // empty')
+          NOTES=$(echo "$RELEASE" | jq -r '.body // "(no release notes)"')
+          URL=$(echo "$RELEASE" | jq -r '.html_url // empty')
+          DATE=$(echo "$RELEASE" | jq -r '.published_at // empty' | cut -c1-10)
+
+          # If no releases exist, fall back to latest commit on main
+          if [ -z "$TAG" ]; then
+            COMMIT=$(curl -s https://api.github.com/repos/f-is-h/Usage4Claude/commits/main | jq -r '.sha' | cut -c1-7)
+            TAG="commit-$COMMIT"
+            NOTES="No formal release — latest commit: $COMMIT"
+            URL="https://github.com/f-is-h/Usage4Claude/commits/main"
+            DATE=$(curl -s https://api.github.com/repos/f-is-h/Usage4Claude/commits/main | jq -r '.commit.author.date' | cut -c1-10)
+          fi
+
+          TRACKED=$(cat .upstream-version 2>/dev/null || echo "none")
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "tracked=$TRACKED" >> $GITHUB_OUTPUT
+          echo "url=$URL" >> $GITHUB_OUTPUT
+          echo "date=$DATE" >> $GITHUB_OUTPUT
+
+          # Multi-line output for notes
+          {
+            echo 'notes<<NOTES_EOF'
+            echo "$NOTES"
+            echo 'NOTES_EOF'
+          } >> $GITHUB_OUTPUT
+
+          if [ "$TAG" != "$TRACKED" ] && [ "$TAG" != "none" ]; then
+            echo "new=true" >> $GITHUB_OUTPUT
+          else
+            echo "new=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create issue for upstream changes
+        if: steps.upstream.outputs.new == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag     = `${{ steps.upstream.outputs.tag }}`;
+            const tracked = `${{ steps.upstream.outputs.tracked }}`;
+            const url     = `${{ steps.upstream.outputs.url }}`;
+            const date    = `${{ steps.upstream.outputs.date }}`;
+            const notes   = `${{ steps.upstream.outputs.notes }}`;
+
+            const compareUrl = tracked !== 'none' && !tracked.startsWith('commit-')
+              ? `https://github.com/f-is-h/Usage4Claude/compare/${tracked}...${tag}`
+              : `https://github.com/f-is-h/Usage4Claude/commits/main`;
+
+            const body = [
+              `## Upstream update detected: \`${tag}\` (${date})`,
+              ``,
+              `The original macOS app [f-is-h/Usage4Claude](https://github.com/f-is-h/Usage4Claude) has a new release.`,
+              `Review the changes below and port anything relevant to the Windows version.`,
+              ``,
+              `### Links`,
+              `- 📦 [Release page](${url})`,
+              `- 🔍 [Compare changes](${compareUrl})`,
+              `- 📁 [Full source](https://github.com/f-is-h/Usage4Claude/tree/${tag})`,
+              ``,
+              `### Release notes`,
+              notes || '_No release notes provided._',
+              ``,
+              `### What to check`,
+              `- API endpoint changes in \`**/API*.swift\` → port to \`src/utils/api.js\``,
+              `- New limit types or usage fields → \`src/utils/api.js\` + \`src/popup.js\``,
+              `- New settings or preferences → \`src/settings.html\` + \`src/utils/config.js\``,
+              `- Notification logic changes → \`main.js\``,
+              `- UI/UX changes → \`src/popup.html\``,
+              ``,
+              `---`,
+              `_This issue was created automatically by the upstream sync workflow._`,
+              `_Previous tracked version: \`${tracked}\`_`,
+            ].join('\n');
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `⬆️ Upstream update available: ${tag} (${date})`,
+              body,
+              labels: ['upstream-sync'],
+            });
+
+      - name: Update tracked version
+        if: steps.upstream.outputs.new == 'true'
+        run: |
+          echo "${{ steps.upstream.outputs.tag }}" > .upstream-version
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .upstream-version
+          git commit -m "chore: track upstream ${{ steps.upstream.outputs.tag }}"
+          git push
