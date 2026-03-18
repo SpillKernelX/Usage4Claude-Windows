@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html><body style="margin:0;background:transparent">
+<canvas id="c" width="64" height="64"></canvas>
+<script>
+window.drawIcon = function(opts) {
+  const { pct, color, mode, state, monochrome } = opts;
+  const c = document.getElementById('c');
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, 64, 64);
+
+  const S = 64;
+
+  // ── Background pill ────────────────────────────────────────────
+  function drawBg(fillColor) {
+    ctx.beginPath();
+    ctx.roundRect(2, 2, S - 4, S - 4, 14);
+    ctx.fillStyle = fillColor;
+    ctx.fill();
+  }
+
+  if (state === 'loading') {
+    drawBg('#e5e5ea');
+    // Dashed ring
+    ctx.beginPath();
+    ctx.arc(S / 2, S / 2, 20, 0, Math.PI * 2);
+    ctx.strokeStyle = '#9ca3af';
+    ctx.lineWidth = 4;
+    ctx.setLineDash([4, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // Center dot
+    ctx.beginPath();
+    ctx.arc(S / 2, S / 2, 3, 0, Math.PI * 2);
+    ctx.fillStyle = '#9ca3af';
+    ctx.fill();
+    return c.toDataURL('image/png');
+  }
+
+  if (state === 'error') {
+    drawBg('#fee2e2');
+    ctx.strokeStyle = '#ef4444';
+    ctx.lineWidth = 4.5;
+    ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(19, 19); ctx.lineTo(45, 45); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(45, 19); ctx.lineTo(19, 45); ctx.stroke();
+    return c.toDataURL('image/png');
+  }
+
+  // ── Normal state ───────────────────────────────────────────────
+  const cx = S / 2, cy = S / 2;
+
+  if (mode === 'percentage') {
+    // Number only — no background, no ring; color matches usage level
+    const label = Math.round(pct).toString();
+    const fontSize = label.length >= 3 ? 18 : 24;
+    ctx.fillStyle = color;
+    ctx.font = `bold ${fontSize}px -apple-system, Arial, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, cx, cy + 1);
+    return c.toDataURL('image/png');
+  }
+
+  // combined / icon: gray badge background + progress ring
+  drawBg('#e8e8ed');
+
+  const ringR  = 21;
+  const trackW = 4.5;
+
+  // Ring track
+  ctx.beginPath();
+  ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
+  ctx.strokeStyle = monochrome ? '#c7c7cc' : '#d1d1d6';
+  ctx.lineWidth = trackW;
+  ctx.stroke();
+
+  // Progress arc (clockwise from 12 o'clock)
+  if (pct > 0) {
+    const startAngle = -Math.PI / 2;
+    const endAngle   = startAngle + (pct / 100) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, ringR, startAngle, endAngle);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = trackW;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+    ctx.lineCap = 'butt';
+  }
+
+  // Center number (combined only — icon mode skips it)
+  if (mode !== 'icon') {
+    const label = Math.round(pct).toString();
+    const fontSize = label.length >= 3 ? 16 : 20;
+    ctx.fillStyle = '#1c1c1e';
+    ctx.font = `bold ${fontSize}px -apple-system, Arial, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, cx, cy + 1);
+  }
+
+  return c.toDataURL('image/png');
+};
+</script>
+</body></html>

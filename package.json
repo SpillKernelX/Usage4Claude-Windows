@@ -1,0 +1,27 @@
+{
+  "name": "usage4claude",
+  "version": "1.0.0",
+  "description": "Claude usage monitor for Windows",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.0.0",
+    "electron-store": "^8.2.0"
+  },
+  "build": {
+    "appId": "com.usage4claude.app",
+    "productName": "Usage4Claude",
+    "win": {
+      "target": "nsis",
+      "icon": "icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

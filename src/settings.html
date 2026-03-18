@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Usage4Claude — Settings</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #f5f5f7;
+    --card: #ffffff;
+    --border: rgba(0,0,0,0.1);
+    --text: #1d1d1f;
+    --subtext: #6e6e73;
+    --accent: #007aff;
+    --danger: #ef4444;
+    --row: #f5f5f7;
+    --input-bg: #ffffff;
+    --input-border: rgba(0,0,0,0.15);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1c1e;
+      --card: #2c2c2e;
+      --border: rgba(255,255,255,0.1);
+      --text: #f5f5f7;
+      --subtext: #8e8e93;
+      --row: #3a3a3c;
+      --input-bg: #1c1c1e;
+      --input-border: rgba(255,255,255,0.15);
+    }
+  }
+
+  body {
+    font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── Tabs ── */
+  .tabs {
+    display: flex;
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    padding: 0 16px;
+    flex-shrink: 0;
+    -webkit-app-region: drag;
+  }
+
+  .tab {
+    padding: 12px 14px 10px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--subtext);
+    border-bottom: 2px solid transparent;
+    transition: color 0.15s, border-color 0.15s;
+    -webkit-app-region: no-drag;
+    white-space: nowrap;
+  }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab:hover:not(.active) { color: var(--text); }
+
+  /* ── Panels ── */
+  .panels { flex: 1; overflow-y: auto; padding: 16px; }
+  .panel { display: none; flex-direction: column; gap: 12px; }
+  .panel.active { display: flex; }
+
+  /* ── Section card ── */
+  .section {
+    background: var(--card);
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+
+  .section-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--subtext);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 10px 14px 4px;
+  }
+
+  .row {
+    display: flex;
+    align-items: center;
+    padding: 10px 14px;
+    gap: 10px;
+    border-top: 1px solid var(--border);
+  }
+  .row:first-of-type { border-top: none; }
+
+  .row-label { flex: 1; color: var(--text); }
+  .row-sub { font-size: 11px; color: var(--subtext); margin-top: 1px; }
+
+  input[type="text"], input[type="password"], select {
+    background: var(--input-bg);
+    border: 1px solid var(--input-border);
+    border-radius: 7px;
+    padding: 6px 10px;
+    color: var(--text);
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  input:focus, select:focus { border-color: var(--accent); }
+  input[type="text"].full, input[type="password"].full, select.full { width: 100%; }
+
+  /* Toggle switch */
+  .toggle {
+    position: relative;
+    width: 40px; height: 24px;
+    flex-shrink: 0;
+  }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle-track {
+    position: absolute; inset: 0;
+    background: #d1d1d6;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .toggle input:checked + .toggle-track { background: var(--accent); }
+  .toggle-track::after {
+    content: '';
+    position: absolute;
+    width: 18px; height: 18px;
+    background: white;
+    border-radius: 50%;
+    top: 3px; left: 3px;
+    transition: transform 0.2s;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  }
+  .toggle input:checked + .toggle-track::after { transform: translateX(16px); }
+
+  /* Buttons */
+  .btn {
+    padding: 7px 16px;
+    border-radius: 8px;
+    border: none;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+    transition: opacity 0.15s;
+    white-space: nowrap;
+  }
+  .btn:hover { opacity: 0.85; }
+  .btn:disabled { opacity: 0.4; cursor: default; }
+  .btn-primary { background: var(--accent); color: white; }
+  .btn-secondary { background: var(--row); color: var(--text); }
+  .btn-danger { background: var(--danger); color: white; }
+
+  /* Status label */
+  .status { font-size: 12px; color: var(--subtext); margin-top: 2px; }
+  .status.ok { color: #16a34a; }
+  .status.err { color: var(--danger); }
+
+  /* Account list */
+  .account-item {
+    display: flex;
+    align-items: center;
+    padding: 10px 14px;
+    gap: 10px;
+    border-top: 1px solid var(--border);
+  }
+  .account-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent); flex-shrink: 0;
+  }
+  .account-dot.inactive { background: var(--subtext); }
+  .account-info { flex: 1; min-width: 0; }
+  .account-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .account-org { font-size: 11px; color: var(--subtext); }
+
+  /* Radio group */
+  .radio-group { display: flex; flex-direction: column; }
+  .radio-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 14px;
+    border-top: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .radio-row:first-child { border-top: none; }
+  .radio-row input[type="radio"] { accent-color: var(--accent); width: 15px; height: 15px; }
+
+  /* Column layout for some rows */
+  .row.col { flex-direction: column; align-items: stretch; gap: 6px; }
+
+  /* Footer bar */
+  .footer-bar {
+    border-top: 1px solid var(--border);
+    padding: 10px 16px;
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    background: var(--card);
+    flex-shrink: 0;
+  }
+
+  select option { background: var(--input-bg); }
+</style>
+</head>
+<body>
+
+<!-- Tab bar -->
+<div class="tabs">
+  <div class="tab active" data-tab="accounts">Accounts</div>
+  <div class="tab" data-tab="display">Display</div>
+  <div class="tab" data-tab="refresh">Refresh</div>
+  <div class="tab" data-tab="notifications">Notifications</div>
+  <div class="tab" data-tab="advanced">Advanced</div>
+</div>
+
+<div class="panels">
+
+  <!-- ══ ACCOUNTS ══ -->
+  <div class="panel active" id="tab-accounts">
+
+    <!-- Browser login -->
+    <div class="section">
+      <div class="section-title">Add Account</div>
+      <div class="row col">
+        <button class="btn btn-primary" id="browserLoginBtn">Log in with Browser</button>
+        <div class="status" id="browserStatus">Opens Claude in a browser window and captures your session key automatically.</div>
+      </div>
+      <div class="row col">
+        <div class="row-label">Or enter session key manually</div>
+        <div style="display:flex;gap:6px">
+          <input type="password" id="skInput" class="full" placeholder="sk-ant-sid01-…" style="flex:1"/>
+          <button class="btn btn-secondary" id="skToggle" style="padding:7px 10px">👁</button>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <button class="btn btn-secondary" id="fetchOrgsBtn">Fetch Orgs</button>
+          <select id="orgSelect" style="flex:1"><option value="">— Select organization —</option></select>
+        </div>
+        <div style="display:flex;gap:6px">
+          <input type="text" id="aliasInput" class="full" placeholder="Alias (optional)" style="flex:1"/>
+          <button class="btn btn-primary" id="addAccountBtn">Add</button>
+        </div>
+        <div class="status" id="fetchStatus"></div>
+      </div>
+    </div>
+
+    <!-- Existing accounts -->
+    <div class="section">
+      <div class="section-title">Accounts</div>
+      <div id="accountList"><div style="padding:12px 14px;color:var(--subtext)">No accounts yet.</div></div>
+    </div>
+  </div>
+
+  <!-- ══ DISPLAY ══ -->
+  <div class="panel" id="tab-display">
+    <div class="section">
+      <div class="section-title">Tray Icon Mode</div>
+      <div class="radio-group" id="displayModeGroup">
+        <label class="radio-row">
+          <input type="radio" name="displayMode" value="combined"/>
+          <div><div class="row-label">Combined</div><div class="row-sub">Ring + percentage number on gray badge</div></div>
+        </label>
+        <label class="radio-row">
+          <input type="radio" name="displayMode" value="percentage"/>
+          <div><div class="row-label">Percentage only</div><div class="row-sub">Colored number, no background</div></div>
+        </label>
+        <label class="radio-row">
+          <input type="radio" name="displayMode" value="icon"/>
+          <div><div class="row-label">Ring only</div><div class="row-sub">Progress ring on gray badge, no number</div></div>
+        </label>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Colors</div>
+      <div class="row">
+        <div class="row-label">
+          Monochrome
+          <div class="row-sub">Disables status colors — uses gray for all states</div>
+        </div>
+        <label class="toggle"><input type="checkbox" id="monoToggle"/><span class="toggle-track"></span></label>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Appearance</div>
+      <div class="row">
+        <div class="row-label">Theme</div>
+        <select id="themeSelect">
+          <option value="system">Follow System</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+      </div>
+      <div class="row">
+        <div class="row-label">Time format</div>
+        <select id="timeFormatSelect">
+          <option value="system">System default</option>
+          <option value="12h">12-hour</option>
+          <option value="24h">24-hour</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ REFRESH ══ -->
+  <div class="panel" id="tab-refresh">
+    <div class="section">
+      <div class="section-title">Smart Frequency</div>
+      <div class="row">
+        <div class="row-label">
+          Adaptive refresh
+          <div class="row-sub">Speeds up when usage is high or reset is near</div>
+        </div>
+        <label class="toggle"><input type="checkbox" id="smartRefreshToggle"/><span class="toggle-track"></span></label>
+      </div>
+      <div class="row">
+        <div style="font-size:12px;color:var(--subtext);line-height:1.6">
+          ≥85% or &lt;10 min to reset → every 1 min<br/>
+          ≥70% or &lt;30 min to reset → every 3 min<br/>
+          Otherwise → interval below
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Base Interval</div>
+      <div class="row">
+        <div class="row-label">Refresh every</div>
+        <select id="intervalSelect">
+          <option value="1">1 minute</option>
+          <option value="3">3 minutes</option>
+          <option value="5">5 minutes</option>
+          <option value="10">10 minutes</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ NOTIFICATIONS ══ -->
+  <div class="panel" id="tab-notifications">
+    <div class="section">
+      <div class="section-title">Alerts</div>
+      <div class="row">
+        <div class="row-label">
+          90% warning
+          <div class="row-sub">Notify when any limit reaches 90%</div>
+        </div>
+        <label class="toggle"><input type="checkbox" id="notify90Toggle"/><span class="toggle-track"></span></label>
+      </div>
+      <div class="row">
+        <div class="row-label">
+          Quota reset
+          <div class="row-sub">Notify when a new quota period starts</div>
+        </div>
+        <label class="toggle"><input type="checkbox" id="notifyResetToggle"/><span class="toggle-track"></span></label>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ ADVANCED ══ -->
+  <div class="panel" id="tab-advanced">
+    <div class="section">
+      <div class="section-title">Startup</div>
+      <div class="row">
+        <div class="row-label">
+          Launch at login
+          <div class="row-sub">Start automatically when Windows starts</div>
+        </div>
+        <label class="toggle"><input type="checkbox" id="launchAtLoginToggle"/><span class="toggle-track"></span></label>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Updates</div>
+      <div class="row">
+        <div class="row-label">Check for updates on startup</div>
+        <label class="toggle"><input type="checkbox" id="checkUpdatesToggle"/><span class="toggle-track"></span></label>
+      </div>
+      <div class="row col">
+        <div class="row-label">GitHub repository</div>
+        <input type="text" id="updateRepoInput" class="full" placeholder="owner/repo"/>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Diagnostics</div>
+      <div class="row">
+        <div class="row-label">View log</div>
+        <button class="btn btn-secondary" id="openLogsBtn">Open Logs</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Data</div>
+      <div class="row">
+        <div class="row-label">Remove all accounts and reset settings</div>
+        <button class="btn btn-danger" id="resetBtn">Reset</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Footer -->
+<div class="footer-bar">
+  <button class="btn btn-secondary" id="cancelBtn">Cancel</button>
+  <button class="btn btn-primary" id="saveBtn">Save</button>
+</div>
+
+<script src="settings.js"></script>
+</body>
+</html>
