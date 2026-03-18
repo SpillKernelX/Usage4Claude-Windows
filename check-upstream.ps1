@@ -1,30 +1,30 @@
 Set-Location $PSScriptRoot
 
-function Show-Toast($title, $body) {
-  [Windows.UI.Notifications.ToastNotificationManager,
-   Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
-  [Windows.Data.Xml.Dom.XmlDocument,
-   Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
 
-  $xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent(
-    [Windows.UI.Notifications.ToastTemplateType]::ToastText02)
-  $xml.GetElementsByTagName('text')[0].AppendChild($xml.CreateTextNode($title)) | Out-Null
-  $xml.GetElementsByTagName('text')[1].AppendChild($xml.CreateTextNode($body))  | Out-Null
-
-  $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
-  [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier(
-    'Usage4Claude — Upstream Check').Show($toast)
+function Show-Balloon($title, $body) {
+  $icon = New-Object System.Windows.Forms.NotifyIcon
+  $icon.Icon = [System.Drawing.Icon]::new((Join-Path $PSScriptRoot 'icon.ico'))
+  $icon.BalloonTipIcon  = [System.Windows.Forms.ToolTipIcon]::Info
+  $icon.BalloonTipTitle = $title
+  $icon.BalloonTipText  = $body
+  $icon.Visible = $true
+  $icon.ShowBalloonTip(4000)
+  Start-Sleep -Milliseconds 600
+  $icon.Visible = $false
+  $icon.Dispose()
 }
 
 # ── Trigger the workflow ───────────────────────────────────────────────────
-Show-Toast "Checking upstream..." "Queuing workflow on GitHub Actions..."
+Show-Balloon "Usage4Claude" "Checking upstream macOS repo for changes..."
 
 $result = gh workflow run upstream-sync.yml --repo SpillKernelX/Usage4Claude-Windows 2>&1
 
 if ($LASTEXITCODE -eq 0) {
-  Show-Toast "Upstream check triggered" "Opening Actions page in your browser..."
-  Start-Sleep -Seconds 2
+  Show-Balloon "Upstream check triggered" "Opening Actions page in your browser..."
+  Start-Sleep -Seconds 1
   Start-Process "https://github.com/SpillKernelX/Usage4Claude-Windows/actions/workflows/upstream-sync.yml"
 } else {
-  Show-Toast "Upstream check failed" $result
+  Show-Balloon "Upstream check failed" "$result"
 }
