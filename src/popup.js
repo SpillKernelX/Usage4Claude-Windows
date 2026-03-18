@@ -1,6 +1,4 @@
-/* Popup renderer — communicates with main process via contextBridge */
-
-const { ipcRenderer } = require('electron');
+/* Popup renderer — uses window.api exposed by preload/popup.js */
 
 // ── Limit metadata ────────────────────────────────────────────────────────
 
@@ -27,7 +25,7 @@ const LIMITS = [
   },
 ];
 
-// ── SVG icon helpers ──────────────────────────────────────────────────────
+// ── SVG icon helpers (author-controlled constants — safe for innerHTML) ───
 
 function circleIcon(color) {
   return `<svg width="18" height="18" viewBox="0 0 18 18">
@@ -79,7 +77,6 @@ function buildRings(usage) {
     svg.appendChild(arc);
   });
 
-  // Primary percentage for center display
   const primary = usage.fiveHour || usage.sevenDay;
   document.getElementById('ringPct').textContent =
     primary ? Math.round(primary.percentage) + '%' : '—';
@@ -116,11 +113,9 @@ function formatResetTime(resetsAt, style) {
 function render(state) {
   const { usage, error, account, lastFetched, timeFormat } = state;
 
-  // Account label (only if multiple accounts)
   document.getElementById('accountLabel').textContent =
     state.multiAccount ? (account?.alias || account?.orgName || '') : '';
 
-  // Error banner
   const errorRow = document.getElementById('errorRow');
   if (error) {
     errorRow.style.display = 'block';
@@ -136,7 +131,6 @@ function render(state) {
     ringSection.style.display = 'none';
     if (error) {
       rows.innerHTML = '';
-      // Use textContent for error to avoid XSS (M6)
       const wrap = document.createElement('div');
       wrap.className = 'empty-state';
       const msg = document.createElement('div');
@@ -145,12 +139,12 @@ function render(state) {
       const settingsBtn = document.createElement('button');
       settingsBtn.className = 'setup-btn';
       settingsBtn.textContent = 'Open Settings';
-      settingsBtn.addEventListener('click', () => ipcRenderer.send('open-settings'));
+      settingsBtn.addEventListener('click', () => window.api.openSettings());
       const diagBtn = document.createElement('button');
       diagBtn.className = 'setup-btn';
       diagBtn.style.cssText = 'background:var(--row-bg);color:var(--text);margin-top:6px';
       diagBtn.textContent = 'Run Diagnostics';
-      diagBtn.addEventListener('click', () => ipcRenderer.send('open-logs'));
+      diagBtn.addEventListener('click', () => window.api.openLogs());
       wrap.append(msg, settingsBtn, diagBtn);
       rows.appendChild(wrap);
     } else {
@@ -162,11 +156,9 @@ function render(state) {
     return;
   }
 
-  // Ring chart
   ringSection.style.display = 'flex';
   buildRings(usage);
 
-  // Rows
   rows.innerHTML = '';
   LIMITS.forEach(({ key, label, color, icon, timeStyle }) => {
     const data = usage[key];
@@ -184,6 +176,7 @@ function render(state) {
 
     const row = document.createElement('div');
     row.className = 'row';
+    // icon, label, valueStr are all author-controlled constants
     row.innerHTML = `
       <div class="row-icon">${icon}</div>
       <span class="row-name">${label}</span>
@@ -192,7 +185,6 @@ function render(state) {
     rows.appendChild(row);
   });
 
-  // Last updated
   if (lastFetched) {
     const d = new Date(lastFetched);
     document.getElementById('lastUpdated').textContent =
@@ -202,7 +194,7 @@ function render(state) {
 
 // ── IPC ───────────────────────────────────────────────────────────────────
 
-ipcRenderer.on('state', (_e, state) => {
+window.api.onState(state => {
   if (state.timeFormat) _timeFormat = state.timeFormat;
   render(state);
 });
@@ -210,15 +202,14 @@ ipcRenderer.on('state', (_e, state) => {
 document.getElementById('refreshBtn').addEventListener('click', () => {
   const btn = document.getElementById('refreshBtn');
   btn.classList.add('spinning');
-  ipcRenderer.send('refresh');
+  window.api.refresh();
   setTimeout(() => btn.classList.remove('spinning'), 1500);
 });
 
 document.getElementById('settingsBtn').addEventListener('click', () =>
-  ipcRenderer.send('open-settings'));
+  window.api.openSettings());
 
 document.getElementById('menuBtn').addEventListener('click', () =>
-  ipcRenderer.send('show-context-menu'));
+  window.api.showContextMenu());
 
-// Request initial state
-ipcRenderer.send('popup-ready');
+window.api.popupReady();

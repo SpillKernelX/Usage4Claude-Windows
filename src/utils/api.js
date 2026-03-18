@@ -51,6 +51,7 @@ async function fetchOrganizations(sessionKey) {
 }
 
 async function fetchUsage(sessionKey, orgId) {
+  if (!orgId || !/^[0-9a-f-]{36}$/i.test(orgId)) throw new Error('Invalid organisation ID');
   const [usageRes, extraRes] = await Promise.allSettled([
     fetch(`${BASE}/${orgId}/usage`, { headers: headers(sessionKey) }),
     fetch(`${BASE}/${orgId}/overage_spend_limit`, { headers: headers(sessionKey) }),
@@ -97,7 +98,7 @@ async function fetchUsage(sessionKey, orgId) {
 }
 
 async function checkForUpdate(repo) {
-  if (!repo) return null;
+  if (!repo || !/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(repo)) return null;
   const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
     headers: { Accept: 'application/vnd.github+json' },
   });

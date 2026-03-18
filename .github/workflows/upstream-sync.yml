@@ -57,13 +57,19 @@ jobs:
       - name: Create issue for upstream changes
         if: steps.upstream.outputs.new == 'true'
         uses: actions/github-script@v7
+        env:
+          UPSTREAM_TAG:     ${{ steps.upstream.outputs.tag }}
+          UPSTREAM_TRACKED: ${{ steps.upstream.outputs.tracked }}
+          UPSTREAM_URL:     ${{ steps.upstream.outputs.url }}
+          UPSTREAM_DATE:    ${{ steps.upstream.outputs.date }}
+          UPSTREAM_NOTES:   ${{ steps.upstream.outputs.notes }}
         with:
           script: |
-            const tag     = `${{ steps.upstream.outputs.tag }}`;
-            const tracked = `${{ steps.upstream.outputs.tracked }}`;
-            const url     = `${{ steps.upstream.outputs.url }}`;
-            const date    = `${{ steps.upstream.outputs.date }}`;
-            const notes   = `${{ steps.upstream.outputs.notes }}`;
+            const tag     = process.env.UPSTREAM_TAG     || '';
+            const tracked = process.env.UPSTREAM_TRACKED || '';
+            const url     = process.env.UPSTREAM_URL     || '';
+            const date    = process.env.UPSTREAM_DATE    || '';
+            const notes   = process.env.UPSTREAM_NOTES   || '';
 
             const compareUrl = tracked !== 'none' && !tracked.startsWith('commit-')
               ? `https://github.com/f-is-h/Usage4Claude/compare/${tracked}...${tag}`
@@ -105,10 +111,12 @@ jobs:
 
       - name: Update tracked version
         if: steps.upstream.outputs.new == 'true'
+        env:
+          UPSTREAM_TAG: ${{ steps.upstream.outputs.tag }}
         run: |
-          echo "${{ steps.upstream.outputs.tag }}" > .upstream-version
+          printf '%s' "$UPSTREAM_TAG" > .upstream-version
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add .upstream-version
-          git commit -m "chore: track upstream ${{ steps.upstream.outputs.tag }}"
+          git commit -m "chore: track upstream ${UPSTREAM_TAG}"
           git push

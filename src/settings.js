@@ -1,12 +1,23 @@
-const { ipcRenderer } = require('electron');
+/* Settings renderer — uses window.api exposed by preload/settings.js */
 
 let settings = {};
 let accounts = [];
 let fetchedOrgs = [];
 
+// ── HTML escaping ─────────────────────────────────────────────────────────
+
+function escapeHtml(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────
 
-ipcRenderer.on('init', (_e, data) => {
+window.api.onInit(data => {
   settings = data.settings;
   accounts = data.accounts;
   populate();
@@ -60,13 +71,16 @@ function renderAccountList() {
   container.innerHTML = '';
   accounts.forEach((acc, i) => {
     const isActive = i === activeIdx;
+    // Escape user/API-sourced strings before inserting into HTML (HIGH-3)
+    const displayName = escapeHtml(acc.alias || acc.orgName || 'Account ' + (i + 1));
+    const orgName     = escapeHtml(acc.orgName);
     const div = document.createElement('div');
     div.className = 'account-item';
     div.innerHTML = `
       <div class="account-dot ${isActive ? '' : 'inactive'}"></div>
       <div class="account-info">
-        <div class="account-name">${acc.alias || acc.orgName || 'Account ' + (i+1)}</div>
-        <div class="account-org">${acc.orgName}</div>
+        <div class="account-name">${displayName}</div>
+        <div class="account-org">${orgName}</div>
       </div>
       ${!isActive ? `<button class="btn btn-secondary" data-switch="${i}" style="padding:5px 10px;font-size:12px">Switch</button>` : '<span style="font-size:11px;color:var(--accent)">Active</span>'}
       <button class="btn btn-danger" data-remove="${i}" style="padding:5px 10px;font-size:12px">Remove</button>
@@ -99,10 +113,10 @@ document.getElementById('browserLoginBtn').addEventListener('click', () => {
   btn.disabled = true;
   btn.textContent = 'Opening browser…';
   setStatus('browserStatus', 'Log in to Claude in the window that opens.', '');
-  ipcRenderer.send('browser-login');
+  window.api.browserLogin();
 });
 
-ipcRenderer.on('browser-login-result', (_e, result) => {
+window.api.onBrowserLoginResult(result => {
   const btn = document.getElementById('browserLoginBtn');
   btn.disabled = false;
   btn.textContent = 'Log in with Browser';
@@ -130,10 +144,10 @@ document.getElementById('fetchOrgsBtn').addEventListener('click', () => {
   if (!sk) { setStatus('fetchStatus', 'Enter a session key first.', 'err'); return; }
   setStatus('fetchStatus', 'Fetching…', '');
   document.getElementById('fetchOrgsBtn').disabled = true;
-  ipcRenderer.send('fetch-orgs', sk);
+  window.api.fetchOrgs(sk);
 });
 
-ipcRenderer.on('fetch-orgs-result', (_e, result) => {
+window.api.onFetchOrgsResult(result => {
   document.getElementById('fetchOrgsBtn').disabled = false;
   if (result.error) {
     setStatus('fetchStatus', result.error, 'err');
@@ -191,20 +205,20 @@ document.getElementById('saveBtn').addEventListener('click', () => {
     updateRepo: document.getElementById('updateRepoInput').value.trim(),
     activeAccountIndex: settings.activeAccountIndex || 0,
   };
-  ipcRenderer.send('save-settings', { settings: newSettings, accounts });
+  window.api.saveSettings({ settings: newSettings, accounts });
 });
 
 document.getElementById('cancelBtn').addEventListener('click', () =>
-  ipcRenderer.send('close-settings'));
+  window.api.closeSettings());
 
 document.getElementById('resetBtn').addEventListener('click', () => {
   if (confirm('Remove all accounts and reset settings?')) {
-    ipcRenderer.send('reset-all');
+    window.api.resetAll();
   }
 });
 
 document.getElementById('openLogsBtn').addEventListener('click', () =>
-  ipcRenderer.send('open-logs'));
+  window.api.openLogs());
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -214,4 +228,4 @@ function setStatus(id, msg, type) {
   el.className = 'status' + (type ? ' ' + type : '');
 }
 
-ipcRenderer.send('settings-ready');
+window.api.settingsReady();

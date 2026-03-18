@@ -13,7 +13,6 @@ if (!app.requestSingleInstanceLock()) {
 
 // Reduce Chromium disk cache pressure (avoids "Unable to move cache" errors)
 app.commandLine.appendSwitch('disk-cache-size', '1');
-app.commandLine.appendSwitch('disable-gpu-sandbox');
 
 const config = require('./src/utils/config');
 const api    = require('./src/utils/api');
@@ -113,7 +112,13 @@ function buildContextMenu() {
     { label: 'Check for Updates',   click: () => checkUpdates(true) },
     ...(updateInfo ? [
       { type: 'separator' },
-      { label: `Update available: v${updateInfo.version}`, click: () => shell.openExternal(updateInfo.url) },
+      { label: `Update available: v${updateInfo.version}`, click: () => {
+        // Validate URL before opening — only allow known GitHub releases path (HIGH-2)
+        const u = updateInfo.url;
+        if (typeof u === 'string' &&
+            /^https:\/\/github\.com\/[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+\/releases/.test(u))
+          shell.openExternal(u);
+      }},
     ] : []),
     { type: 'separator' },
     { label: 'Quit', click: () => app.exit(0) },
@@ -135,8 +140,9 @@ function createPopup() {
     transparent: true,
     icon: path.join(__dirname, 'icon.ico'),
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'src/preload/popup.js'),
     },
   });
   popupWin.loadFile(path.join(__dirname, 'src/popup.html'));
@@ -215,8 +221,9 @@ function openSettings() {
     title: 'Usage4Claude — Settings',
     icon: path.join(__dirname, 'icon.ico'),
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'src/preload/settings.js'),
     },
   });
   settingsWin.loadFile(path.join(__dirname, 'src/settings.html'));
@@ -229,7 +236,11 @@ function openLogs() {
     width: 700, height: 480,
     title: 'Diagnostics — Usage4Claude',
     icon: path.join(__dirname, 'icon.ico'),
-    webPreferences: { nodeIntegration: true, contextIsolation: false },
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'src/preload/logs.js'),
+    },
   });
   logsWin.loadFile(path.join(__dirname, 'src/logs.html'));
   logsWin.webContents.once('dom-ready', () =>
@@ -432,6 +443,23 @@ function addLog(level, msg) {
   if (logs.length > 500) logs.shift();
 }
 
+// ── Settings schema — allowlist for save-settings IPC (MED-4) ─────────────
+
+const SETTINGS_SCHEMA = {
+  displayMode:        v => ['combined', 'percentage', 'icon'].includes(v),
+  monochrome:         v => typeof v === 'boolean',
+  theme:              v => ['system', 'light', 'dark'].includes(v),
+  timeFormat:         v => ['system', '12h', '24h'].includes(v),
+  smartRefresh:       v => typeof v === 'boolean',
+  refreshInterval:    v => [1, 3, 5, 10].includes(v),
+  notifyAt90:         v => typeof v === 'boolean',
+  notifyOnReset:      v => typeof v === 'boolean',
+  launchAtLogin:      v => typeof v === 'boolean',
+  checkUpdates:       v => typeof v === 'boolean',
+  updateRepo:         v => typeof v === 'string' && (v === '' || /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(v)),
+  activeAccountIndex: v => Number.isInteger(v) && v >= 0,
+};
+
 // ── IPC handlers ──────────────────────────────────────────────────────────
 
 ipcMain.on('popup-ready', e => {
@@ -444,10 +472,10 @@ ipcMain.on('open-settings', () => openSettings());
 ipcMain.on('show-context-menu', () => tray.popUpContextMenu(buildContextMenu()));
 
 ipcMain.on('settings-ready', e => {
-  e.sender.send('init', {
-    settings: config.getAll(),
-    accounts: config.getAccounts(),
-  });
+  // Strip accounts (with encryptedKey) from the settings object (LOW-3)
+  const { accounts: _accts, ...safeSettings } = config.getAll();
+  const safeAccounts = config.getAccounts().map(({ encryptedKey: _, ...rest }) => rest);
+  e.sender.send('init', { settings: safeSettings, accounts: safeAccounts });
 });
 
 ipcMain.on('browser-login', e => startBrowserLogin(settingsWin));
@@ -462,7 +490,10 @@ ipcMain.on('fetch-orgs', async (e, sk) => {
 });
 
 ipcMain.on('save-settings', (_e, { settings: newSettings, accounts }) => {
-  Object.entries(newSettings).forEach(([k, v]) => config.set(k, v));
+  // Only write keys that pass schema validation — reject unknown/malformed values (MED-4)
+  Object.entries(newSettings).forEach(([k, v]) => {
+    if (SETTINGS_SCHEMA[k]?.(v)) config.set(k, v);
+  });
 
   // Reconcile accounts (handle new accounts with _newKey)
   const existingBefore = config.getAccounts();

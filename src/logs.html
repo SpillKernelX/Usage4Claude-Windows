@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src https://claude.ai;">
 <title>Diagnostics</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -51,7 +52,6 @@
 </div>
 <div class="log" id="log"></div>
 <script>
-const { ipcRenderer } = require('electron');
 let allLogs = [];
 const LEVELS = { DEBUG:0, INFO:1, WARNING:2, ERROR:3 };
 
@@ -76,7 +76,7 @@ function render() {
   document.getElementById('count').textContent = filtered.length + ' entries';
 }
 
-ipcRenderer.on('logs', (_e, logs) => { allLogs = logs; render(); });
+window.api.onLogs(logs => { allLogs = logs; render(); });
 document.getElementById('filter').addEventListener('change', render);
 document.getElementById('clearBtn').addEventListener('click', () => { allLogs = []; render(); });
 document.getElementById('copyBtn').addEventListener('click', () => {
