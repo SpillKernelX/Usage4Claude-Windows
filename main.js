@@ -473,7 +473,10 @@ ipcMain.on('popup-ready', e => {
 ipcMain.on('refresh', () => triggerRefresh());
 
 ipcMain.on('open-settings', () => openSettings());
-ipcMain.on('show-context-menu', () => tray.popUpContextMenu(buildContextMenu()));
+ipcMain.on('show-context-menu', () => {
+  if (popupWin && !popupWin.isDestroyed()) popupWin.hide();
+  tray.popUpContextMenu(buildContextMenu());
+});
 
 ipcMain.on('settings-ready', e => {
   // Strip accounts (with encryptedKey) from the settings object (LOW-3)
