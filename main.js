@@ -215,6 +215,10 @@ function openSettings() {
     settingsWin.focus();
     return;
   }
+  // Hide popup while settings is open — prevents settings' inactive title bar
+  // showing through the popup's transparent edge when focus moves elsewhere
+  if (popupWin && !popupWin.isDestroyed()) popupWin.hide();
+
   settingsWin = new BrowserWindow({
     width: 520, height: 620,
     minWidth: 460, minHeight: 520,
