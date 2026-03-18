@@ -146,7 +146,7 @@ function createPopup() {
     },
   });
   popupWin.loadFile(path.join(__dirname, 'src/popup.html'));
-  popupWin.on('blur', () => { if (popupWin && !settingsWin) popupWin.hide(); });
+  // Popup stays open until explicitly closed via tray click or settings open
   popupWin.on('closed', () => { popupWin = null; });
 }
 
