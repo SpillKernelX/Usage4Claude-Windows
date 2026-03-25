@@ -1,5 +1,5 @@
 const { BrowserWindow, nativeImage } = require('electron');
-const path = require('path');
+const path = require('node:path');
 
 const COLORS = {
   green:  '#4ade80',

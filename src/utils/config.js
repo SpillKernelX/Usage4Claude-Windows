@@ -16,6 +16,9 @@ const store = new Store({
     theme: 'system',           // 'system' | 'dark' | 'light'
     timeFormat: 'system',      // 'system' | '12h' | '24h'
     launchAtLogin: false,
+    mutedLimits: [],          // per-limit mute: subset of ['5h','7d','opus','sonnet']
+    telegramBotToken: '',
+    telegramChatId: '',
   }
 });
 

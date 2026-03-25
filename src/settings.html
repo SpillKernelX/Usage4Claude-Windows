@@ -351,8 +351,8 @@
       <div class="section-title">Alerts</div>
       <div class="row">
         <div class="row-label">
-          90% warning
-          <div class="row-sub">Notify when any limit reaches 90%</div>
+          Usage warning
+          <div class="row-sub">Notify at 75% for 7-day limits, 90% for 5-hour</div>
         </div>
         <label class="toggle"><input type="checkbox" id="notify90Toggle"/><span class="toggle-track"></span></label>
       </div>
@@ -363,6 +363,47 @@
         </div>
         <label class="toggle"><input type="checkbox" id="notifyResetToggle"/><span class="toggle-track"></span></label>
       </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Per-Limit Mute</div>
+      <div class="row-sub" style="padding:6px 14px 2px;color:var(--subtext)">Muted limits won't trigger 90% alerts</div>
+      <div class="row">
+        <label style="display:flex;align-items:center;gap:8px;flex:1;cursor:pointer">
+          <input type="checkbox" id="mute5h" style="accent-color:var(--accent);width:15px;height:15px"/> 5-Hour Limit
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;flex:1;cursor:pointer">
+          <input type="checkbox" id="mute7d" style="accent-color:var(--accent);width:15px;height:15px"/> 7-Day Limit
+        </label>
+      </div>
+      <div class="row">
+        <label style="display:flex;align-items:center;gap:8px;flex:1;cursor:pointer">
+          <input type="checkbox" id="muteOpus" style="accent-color:var(--accent);width:15px;height:15px"/> Opus Limit
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;flex:1;cursor:pointer">
+          <input type="checkbox" id="muteSonnet" style="accent-color:var(--accent);width:15px;height:15px"/> Sonnet Limit
+        </label>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Telegram</div>
+      <div class="row col">
+        <div class="row-label">Bot Token<div class="row-sub">From @BotFather — kept on this device only</div></div>
+        <div style="display:flex;gap:6px">
+          <input type="password" id="telegramTokenInput" class="full" placeholder="1234567890:ABCdef…" style="flex:1"/>
+          <button class="btn btn-secondary" id="telegramTokenToggle" style="padding:7px 10px">👁</button>
+        </div>
+      </div>
+      <div class="row col">
+        <div class="row-label">Chat ID</div>
+        <input type="text" id="telegramChatIdInput" class="full" placeholder="8587813268"/>
+      </div>
+      <div class="row">
+        <div class="row-label">Send a test message</div>
+        <button class="btn btn-secondary" id="telegramTestBtn">Test</button>
+      </div>
+      <div class="row"><div class="status" id="telegramStatus" style="width:100%"></div></div>
     </div>
   </div>
 
@@ -397,6 +438,25 @@
         <div class="row-label">View log</div>
         <button class="btn btn-secondary" id="openLogsBtn">Open Logs</button>
       </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Backup</div>
+      <div class="row">
+        <div class="row-label">
+          Export settings
+          <div class="row-sub">Save settings to a JSON file (no secrets)</div>
+        </div>
+        <button class="btn btn-secondary" id="exportBtn">Export</button>
+      </div>
+      <div class="row">
+        <div class="row-label">
+          Import settings
+          <div class="row-sub">Restore settings from a JSON file</div>
+        </div>
+        <button class="btn btn-secondary" id="importBtn">Import</button>
+      </div>
+      <div class="row"><div class="status" id="backupStatus" style="width:100%"></div></div>
     </div>
 
     <div class="section">

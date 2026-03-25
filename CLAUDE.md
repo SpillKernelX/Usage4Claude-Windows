@@ -124,23 +124,15 @@ All business logic runs here:
 
 ## Known Issues / Open Work
 
-### ⚠ Bar appearing behind popup on focus loss (UNRESOLVED)
-When the popup loses focus (user clicks elsewhere), a gray Windows title bar/chrome appears at the top of the popup window. Two fixes were attempted:
-1. `thickFrame: false` on the BrowserWindow — did not fully resolve it
-2. `hookWindowMessage(0x0086 /* WM_NCACTIVATE */)` with `setEnabled(false/true)` workaround — still appearing
+### ✅ Bar appearing behind popup on focus loss (RESOLVED)
+**Root cause**: Electron bug — internal Chromium `OnNCActivate` handler passes `WM_NCACTIVATE` to `DefWindowProc` without `lParam=-1`, causing DWM to render the non-client title bar chrome whenever any window's activation state changes. This is a regression introduced in Electron 35.5.0. There is no JavaScript-layer fix — the bug lives inside Chromium's HWND message handler (`hwnd_message_handler.cc`).
 
-**Root cause**: Windows DWM draws non-client area (caption bar) on transparent frameless windows when they become inactive. The `WM_NCACTIVATE` hook approach is correct in theory but the `setEnabled` trick isn't fully suppressing it in Electron 35.
+**Fix**: Upgraded Electron from `^35.0.0` to `^37.3.1` (fixed by Electron PR #47386).
 
-**Things tried (all failed)**:
-1. `thickFrame: false`
-2. `hookWindowMessage(0x0086)` with `setEnabled(false/true)` workaround
-3. `focusable: false` — window can never become inactive so WM_NCACTIVATE never fires (current attempt)
+**GitHub refs**: Issue [#46882](https://github.com/electron/electron/issues/46882), PR [#47386](https://github.com/electron/electron/pull/47386)
 
-**Remaining things to try if focusable:false still fails**:
-- Try `win.setBackgroundColor('#00000000')` explicitly
-- Try replacing `transparent: true` with a solid bg workaround
-- Try `type: 'toolbar'` BrowserWindow option (sets WS_EX_TOOLWINDOW)
-- Try handling `WM_NCPAINT` (0x0085)
+**Broken versions**: 35.5.0–35.7.x, 36.x, 37.0–37.2.x
+**Fixed versions**: 37.3.1+
 
 ### Multi-account display
 - Account switching works but requires a full refresh

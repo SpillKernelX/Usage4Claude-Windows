@@ -39,6 +39,15 @@ function populate() {
   // Notifications
   document.getElementById('notify90Toggle').checked = settings.notifyAt90;
   document.getElementById('notifyResetToggle').checked = settings.notifyOnReset;
+  document.getElementById('telegramTokenInput').value = settings.telegramBotToken || '';
+  document.getElementById('telegramChatIdInput').value = settings.telegramChatId || '';
+
+  // Per-limit mute
+  const muted = settings.mutedLimits || [];
+  document.getElementById('mute5h').checked = muted.includes('5h');
+  document.getElementById('mute7d').checked = muted.includes('7d');
+  document.getElementById('muteOpus').checked = muted.includes('opus');
+  document.getElementById('muteSonnet').checked = muted.includes('sonnet');
 
   // Advanced
   document.getElementById('launchAtLoginToggle').checked = settings.launchAtLogin;
@@ -98,6 +107,8 @@ function renderAccountList() {
   container.querySelectorAll('[data-remove]').forEach(btn => {
     btn.addEventListener('click', () => {
       const idx = parseInt(btn.dataset.remove);
+      const name = accounts[idx]?.alias || accounts[idx]?.orgName || `Account ${idx + 1}`;
+      if (!confirm(`Remove account "${name}"?`)) return;
       accounts.splice(idx, 1);
       if (settings.activeAccountIndex >= accounts.length)
         settings.activeAccountIndex = Math.max(0, accounts.length - 1);
@@ -108,16 +119,12 @@ function renderAccountList() {
 
 // ── Browser login ─────────────────────────────────────────────────────────
 
-document.getElementById('browserLoginBtn').addEventListener('click', () => {
+document.getElementById('browserLoginBtn').addEventListener('click', async () => {
   const btn = document.getElementById('browserLoginBtn');
   btn.disabled = true;
   btn.textContent = 'Opening browser…';
   setStatus('browserStatus', 'Log in to Claude in the window that opens.', '');
-  window.api.browserLogin();
-});
-
-window.api.onBrowserLoginResult(result => {
-  const btn = document.getElementById('browserLoginBtn');
+  const result = await window.api.browserLogin();
   btn.disabled = false;
   btn.textContent = 'Log in with Browser';
   if (result.status === 'ok') {
@@ -139,15 +146,12 @@ document.getElementById('skToggle').addEventListener('click', () => {
 
 // ── Fetch orgs ────────────────────────────────────────────────────────────
 
-document.getElementById('fetchOrgsBtn').addEventListener('click', () => {
+document.getElementById('fetchOrgsBtn').addEventListener('click', async () => {
   const sk = document.getElementById('skInput').value.trim();
   if (!sk) { setStatus('fetchStatus', 'Enter a session key first.', 'err'); return; }
   setStatus('fetchStatus', 'Fetching…', '');
   document.getElementById('fetchOrgsBtn').disabled = true;
-  window.api.fetchOrgs(sk);
-});
-
-window.api.onFetchOrgsResult(result => {
+  const result = await window.api.fetchOrgs(sk);
   document.getElementById('fetchOrgsBtn').disabled = false;
   if (result.error) {
     setStatus('fetchStatus', result.error, 'err');
@@ -190,6 +194,15 @@ document.getElementById('addAccountBtn').addEventListener('click', () => {
 
 // ── Save / Cancel ─────────────────────────────────────────────────────────
 
+function collectMutedLimits() {
+  const muted = [];
+  if (document.getElementById('mute5h').checked) muted.push('5h');
+  if (document.getElementById('mute7d').checked) muted.push('7d');
+  if (document.getElementById('muteOpus').checked) muted.push('opus');
+  if (document.getElementById('muteSonnet').checked) muted.push('sonnet');
+  return muted;
+}
+
 document.getElementById('saveBtn').addEventListener('click', () => {
   const newSettings = {
     displayMode: document.querySelector('input[name="displayMode"]:checked')?.value || 'combined',
@@ -200,6 +213,9 @@ document.getElementById('saveBtn').addEventListener('click', () => {
     refreshInterval: parseInt(document.getElementById('intervalSelect').value),
     notifyAt90: document.getElementById('notify90Toggle').checked,
     notifyOnReset: document.getElementById('notifyResetToggle').checked,
+    mutedLimits: collectMutedLimits(),
+    telegramBotToken: document.getElementById('telegramTokenInput').value.trim(),
+    telegramChatId: document.getElementById('telegramChatIdInput').value.trim(),
     launchAtLogin: document.getElementById('launchAtLoginToggle').checked,
     checkUpdates: document.getElementById('checkUpdatesToggle').checked,
     updateRepo: document.getElementById('updateRepoInput').value.trim(),
@@ -219,6 +235,46 @@ document.getElementById('resetBtn').addEventListener('click', () => {
 
 document.getElementById('openLogsBtn').addEventListener('click', () =>
   window.api.openLogs());
+
+document.getElementById('telegramTokenToggle').addEventListener('click', () => {
+  const inp = document.getElementById('telegramTokenInput');
+  inp.type = inp.type === 'password' ? 'text' : 'password';
+});
+
+document.getElementById('telegramTestBtn').addEventListener('click', async () => {
+  const token  = document.getElementById('telegramTokenInput').value.trim();
+  const chatId = document.getElementById('telegramChatIdInput').value.trim();
+  if (!token || !chatId) {
+    setStatus('telegramStatus', 'Enter both a bot token and chat ID first.', 'err');
+    return;
+  }
+  setStatus('telegramStatus', 'Sending…', '');
+  document.getElementById('telegramTestBtn').disabled = true;
+  const result = await window.api.telegramTest(token, chatId);
+  document.getElementById('telegramTestBtn').disabled = false;
+  if (result.ok) {
+    setStatus('telegramStatus', 'Message sent — check Telegram!', 'ok');
+  } else {
+    setStatus('telegramStatus', 'Failed: ' + (result.error || 'unknown error'), 'err');
+  }
+});
+
+// ── Export / Import ───────────────────────────────────────────────────────
+
+document.getElementById('exportBtn').addEventListener('click', async () => {
+  const result = await window.api.exportSettings();
+  if (result.ok) setStatus('backupStatus', 'Settings exported.', 'ok');
+  else if (result.error) setStatus('backupStatus', 'Export failed: ' + result.error, 'err');
+});
+
+document.getElementById('importBtn').addEventListener('click', async () => {
+  const result = await window.api.importSettings();
+  if (result.ok) {
+    setStatus('backupStatus', 'Settings imported. Restart app to apply all changes.', 'ok');
+  } else if (result.error) {
+    setStatus('backupStatus', 'Import failed: ' + result.error, 'err');
+  }
+});
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 

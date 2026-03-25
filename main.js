@@ -1,8 +1,9 @@
 const {
   app, BrowserWindow, Tray, Menu, ipcMain,
-  nativeTheme, shell, Notification, screen,
+  nativeTheme, shell, Notification, screen, dialog,
 } = require('electron');
-const path = require('path');
+const path = require('node:path');
+const fs   = require('node:fs');
 
 // ── Single-instance lock ───────────────────────────────────────────────────
 // If another instance is already running, focus its tray popup and quit.
@@ -30,6 +31,10 @@ const prevResetsAt = {};
 const prevPct = {};
 const notified90 = new Set();
 let lastRefreshTime = 0;
+
+// Usage history — stores last 30 primary percentages for sparkline
+let usageHistory = [];
+const MAX_HISTORY = 30;
 
 const CURRENT_VERSION = '1.0.0';
 
@@ -89,7 +94,12 @@ function buildTooltip() {
   if (usageData.sevenDay)  parts.push(`7D: ${Math.round(usageData.sevenDay.percentage)}%`);
   if (usageData.opus)      parts.push(`Opus: ${Math.round(usageData.opus.percentage)}%`);
   if (usageData.sonnet)    parts.push(`Sonnet: ${Math.round(usageData.sonnet.percentage)}%`);
-  return 'Claude Usage — ' + (parts.join('  ') || 'No data');
+  // Include active account name for multi-account users
+  const acc = config.getActiveAccount();
+  const accountLabel = config.getAccounts().length > 1 && acc
+    ? ` (${acc.alias || acc.orgName || 'Account'})`
+    : '';
+  return 'Claude Usage — ' + (parts.join('  ') || 'No data') + accountLabel;
 }
 
 function buildContextMenu() {
@@ -133,9 +143,6 @@ function createPopup() {
     width: 336, height: 480,
     show: false,
     frame: false,
-    thickFrame: false,
-    roundedCorners: false,
-    focusable: false,
     resizable: false,
     movable: true,
     alwaysOnTop: true,
@@ -149,6 +156,7 @@ function createPopup() {
     },
   });
   popupWin.loadFile(path.join(__dirname, 'src/popup.html'));
+  popupWin.on('blur', () => { if (popupWin && !popupWin.isDestroyed()) popupWin.hide(); });
   popupWin.on('closed', () => { popupWin = null; });
 }
 
@@ -161,6 +169,7 @@ function togglePopup() {
   }
   positionPopup();
   popupWin.show();
+  popupWin.focus();
   sendStateToPopup();
 }
 
@@ -206,6 +215,7 @@ function sendStateToPopup() {
     multiAccount: config.getAccounts().length > 1,
     lastFetched: usageData?.fetchedAt || null,
     timeFormat: config.get('timeFormat') || 'system',
+    history: usageHistory,
   });
 }
 
@@ -289,6 +299,13 @@ async function doRefresh() {
     usageData = data;
     check90Notifications(data);
     addLog('INFO', `Usage fetched — primary: ${Math.round(data.fiveHour?.percentage ?? data.sevenDay?.percentage ?? 0)}%`);
+
+    // Record history for sparkline
+    const pct = data.fiveHour?.percentage ?? data.sevenDay?.percentage ?? null;
+    if (pct !== null) {
+      usageHistory.push(Math.round(pct));
+      if (usageHistory.length > MAX_HISTORY) usageHistory.shift();
+    }
   } catch (err) {
     lastError = err.message;
     addLog('ERROR', err.message);
@@ -319,16 +336,45 @@ function notify(title, body) {
   if (Notification.isSupported()) new Notification({ title, body }).show();
 }
 
+async function sendTelegramNotification(msg) {
+  const token  = config.get('telegramBotToken');
+  const chatId = config.get('telegramChatId');
+  if (!token || !chatId) return;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text: msg }),
+    });
+    const data = await res.json();
+    if (!data.ok) addLog('WARN', `Telegram notification failed: ${data.description || res.status}`);
+  } catch (e) {
+    addLog('WARN', `Telegram notification error: ${e.message}`);
+  }
+}
+
 function check90Notifications(usage) {
   if (!config.get('notifyAt90')) return;
+
+  // Per-limit mute list (from settings)
+  const mutedLimits = config.get('mutedLimits') || [];
+
+  // 7-day limits get an earlier 75% warning (aligned with upstream v2.6.0 / official behavior)
+  const sevenDayKeys = new Set(['7d', 'opus', 'sonnet']);
+
   [['5h', usage.fiveHour], ['7d', usage.sevenDay], ['opus', usage.opus], ['sonnet', usage.sonnet]]
     .forEach(([key, data]) => {
       if (!data) return;
-      if (data.percentage >= 90) {
+      if (mutedLimits.includes(key)) return; // skip muted limits
+
+      const threshold = sevenDayKeys.has(key) ? 75 : 90;
+
+      if (data.percentage >= threshold) {
         const bucket = `${key}_${Math.floor(data.percentage / 10) * 10}`;
         if (!notified90.has(bucket)) {
           notified90.add(bucket);
           notify('Claude Usage Warning', `${key.toUpperCase()} usage is at ${Math.round(data.percentage)}%!`);
+          sendTelegramNotification(`Claude ${key.toUpperCase()} usage at ${Math.round(data.percentage)}% — quota nearly full.`);
         }
       }
       // Note: notified90 entries are only cleared on actual reset (in checkResetNotifications),
@@ -346,13 +392,20 @@ function checkResetNotifications(usage) {
       const curr      = data.resetsAt ? new Date(data.resetsAt) : null;
       const pct       = data.percentage;
 
-      // Detect reset via timestamp change OR ≥30% percentage drop
-      const timestampReset = prevReset && curr &&
-        curr.getTime() !== new Date(prevReset).getTime() && curr > new Date();
+      // Detect reset via timestamp advancing ≥30 min (real reset moves it ~5h forward;
+      // API jitter only changes it by seconds) OR ≥30% percentage drop
+      const prevResetMs    = prevReset ? new Date(prevReset).getTime() : null;
+      const timestampReset = prevResetMs !== null && curr !== null &&
+        curr.getTime() - prevResetMs > 30 * 60 * 1000;
       const pctDrop = prevP !== null && prevP - pct >= 30;
 
       if (timestampReset || pctDrop) {
         notify('Claude Quota Reset', `${key.toUpperCase()} quota has reset — ${Math.round(pct)}% used.`);
+        // Telegram only fires on confirmed timestamp advance — pctDrop alone is too unreliable
+        if (timestampReset) {
+          const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          sendTelegramNotification(`Claude ${key.toUpperCase()} quota reset at ${time} — your allowance has refreshed.`);
+        }
         for (const k of [...notified90]) if (k.startsWith(`${key}_`)) notified90.delete(k);
       }
       prevResetsAt[key] = data.resetsAt;
@@ -394,7 +447,7 @@ async function checkUpdates(manual = false) {
 
 // ── Browser login ─────────────────────────────────────────────────────────
 
-function startBrowserLogin(senderWin) {
+function startBrowserLogin(resolve) {
   if (loginWin && !loginWin.isDestroyed()) { loginWin.focus(); return; }
 
   loginWin = new BrowserWindow({
@@ -409,8 +462,7 @@ function startBrowserLogin(senderWin) {
   const interval = setInterval(async () => {
     if (!loginWin || loginWin.isDestroyed()) {
       clearInterval(interval);
-      if (senderWin && !senderWin.isDestroyed())
-        senderWin.webContents.send('browser-login-result', { status: 'cancelled' });
+      resolve({ status: 'cancelled' });
       return;
     }
     try {
@@ -424,8 +476,7 @@ function startBrowserLogin(senderWin) {
         const sessionKey = valid.value;
         loginWin.close();
         addLog('INFO', 'Browser login: session key captured.');
-        if (senderWin && !senderWin.isDestroyed())
-          senderWin.webContents.send('browser-login-result', { status: 'ok', sessionKey });
+        resolve({ status: 'ok', sessionKey });
       }
     } catch {}
   }, 1000);
@@ -455,6 +506,9 @@ const SETTINGS_SCHEMA = {
   refreshInterval:    v => [1, 3, 5, 10].includes(v),
   notifyAt90:         v => typeof v === 'boolean',
   notifyOnReset:      v => typeof v === 'boolean',
+  mutedLimits:        v => Array.isArray(v) && v.every(x => ['5h', '7d', 'opus', 'sonnet'].includes(x)),
+  telegramBotToken:   v => typeof v === 'string' && (v === '' || /^\d+:[A-Za-z0-9_-]+$/.test(v)),
+  telegramChatId:     v => typeof v === 'string' && (v === '' || /^-?\d+$/.test(v)),
   launchAtLogin:      v => typeof v === 'boolean',
   checkUpdates:       v => typeof v === 'boolean',
   updateRepo:         v => typeof v === 'string' && (v === '' || /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(v)),
@@ -471,6 +525,9 @@ ipcMain.on('refresh', () => triggerRefresh());
 
 ipcMain.on('open-settings', () => openSettings());
 ipcMain.on('show-context-menu', () => tray.popUpContextMenu(buildContextMenu()));
+ipcMain.on('hide-popup', () => {
+  if (popupWin && !popupWin.isDestroyed()) popupWin.hide();
+});
 
 ipcMain.on('settings-ready', e => {
   // Strip accounts (with encryptedKey) from the settings object (LOW-3)
@@ -479,14 +536,16 @@ ipcMain.on('settings-ready', e => {
   e.sender.send('init', { settings: safeSettings, accounts: safeAccounts });
 });
 
-ipcMain.on('browser-login', e => startBrowserLogin(settingsWin));
+ipcMain.handle('browser-login', () => new Promise((resolve) => {
+  startBrowserLogin(resolve);
+}));
 
-ipcMain.on('fetch-orgs', async (e, sk) => {
+ipcMain.handle('fetch-orgs', async (_e, sk) => {
   try {
     const orgs = await api.fetchOrganizations(sk);
-    e.sender.send('fetch-orgs-result', { orgs });
+    return { orgs };
   } catch (err) {
-    e.sender.send('fetch-orgs-result', { error: err.message });
+    return { error: err.message };
   }
 });
 
@@ -546,8 +605,69 @@ ipcMain.on('reset-all', () => {
   usageData = null;
   lastError = null;
   lastRefreshTime = 0;
+  usageHistory = [];
   updateTrayIcon();
   openSettings();
 });
 
 ipcMain.on('open-logs', () => openLogs());
+
+ipcMain.handle('telegram-test', async (_e, token, chatId) => {
+  if (typeof token !== 'string' || !/^\d+:[A-Za-z0-9_-]+$/.test(token)) return { error: 'Invalid token format' };
+  if (typeof chatId !== 'string' || !/^-?\d+$/.test(chatId)) return { error: 'Invalid chat ID format' };
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text: 'Test from Usage4Claude — notifications are working!' }),
+    });
+    const data = await res.json();
+    if (data.ok) return { ok: true };
+    return { error: data.description || 'Unknown error' };
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
+// ── Export / Import settings ──────────────────────────────────────────────
+
+ipcMain.handle('export-settings', async () => {
+  const result = await dialog.showSaveDialog(settingsWin || undefined, {
+    title: 'Export Settings',
+    defaultPath: 'usage4claude-settings.json',
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+  });
+  if (result.canceled) return { canceled: true };
+  try {
+    const { accounts: rawAccounts, ...settings } = config.getAll();
+    // Strip encrypted keys — export only safe account metadata
+    const accounts = rawAccounts.map(({ encryptedKey: _, ...rest }) => rest);
+    const data = { settings, accounts, exportedAt: new Date().toISOString(), version: CURRENT_VERSION };
+    fs.writeFileSync(result.filePath, JSON.stringify(data, null, 2), 'utf-8');
+    return { ok: true, path: result.filePath };
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
+ipcMain.handle('import-settings', async () => {
+  const result = await dialog.showOpenDialog(settingsWin || undefined, {
+    title: 'Import Settings',
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+    properties: ['openFile'],
+  });
+  if (result.canceled) return { canceled: true };
+  try {
+    const raw = fs.readFileSync(result.filePaths[0], 'utf-8');
+    const data = JSON.parse(raw);
+    if (!data.settings) return { error: 'Invalid settings file — missing settings object.' };
+    // Apply settings through schema validation
+    Object.entries(data.settings).forEach(([k, v]) => {
+      if (SETTINGS_SCHEMA[k]?.(v)) config.set(k, v);
+    });
+    addLog('INFO', `Settings imported from ${result.filePaths[0]}`);
+    return { ok: true };
+  } catch (e) {
+    return { error: e.message };
+  }
+});
