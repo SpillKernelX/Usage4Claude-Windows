@@ -48,18 +48,6 @@ function squareIcon(color, pct) {
   </svg>`;
 }
 
-// ── Currency formatting ───────────────────────────────────────────────────
-
-function currencySymbol(code) {
-  try {
-    // Use Intl to resolve the symbol for any currency code (USD→$, EUR→€, GBP→£, etc.)
-    const parts = new Intl.NumberFormat('en', { style: 'currency', currency: code || 'USD' }).formatToParts(0);
-    return parts.find(p => p.type === 'currency')?.value || code || '$';
-  } catch {
-    return code || '$';
-  }
-}
-
 // ── Ring chart ────────────────────────────────────────────────────────────
 
 function buildRings(usage) {
@@ -387,8 +375,16 @@ function render(state) {
     let valueStr;
     if (timeStyle === 'money') {
       if (!data.enabled) return;
-      const sym = currencySymbol(data.currency);
-      valueStr = `${sym}${data.used.toFixed(0)}/${sym}${data.limit.toFixed(0)}`;
+      // Locale-aware currency formatting with cents precision (upstream v2.6.1 fix):
+      // - System locale picks symbol position + decimal separator (e.g. $1.50 vs 1,50 €)
+      // - 2 fraction digits — previously rounded to whole units
+      const fmt = new Intl.NumberFormat(undefined, {
+        style: 'currency',
+        currency: data.currency || 'USD',
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+      valueStr = `${fmt.format(data.used)} / ${fmt.format(data.limit)}`;
       if (data.outOfCredits) valueStr += ' \u26A0'; // ⚠ out of credits
     } else {
       valueStr = _showRemaining

@@ -1,7 +1,7 @@
 const {
   app, BrowserWindow, Tray, Menu, ipcMain,
   nativeTheme, shell, Notification, screen, dialog,
-  globalShortcut,
+  globalShortcut, powerMonitor,
 } = require('electron');
 const path = require('node:path');
 const fs   = require('node:fs');
@@ -77,6 +77,18 @@ app.whenReady().then(async () => {
     // Re-check every 6 hours while running
     setInterval(() => checkUpdates(), UPDATE_CHECK_INTERVAL);
   }
+
+  // Refresh shortly after system wake / screen unlock — data is almost
+  // always stale after sleep, and the timer fires unpredictably (upstream v3.0.0).
+  // forceRefresh() bypasses the 10s debounce so it always fires.
+  powerMonitor.on('resume', () => {
+    addLog('INFO', 'System resumed from sleep — refreshing usage.');
+    forceRefresh();
+  });
+  powerMonitor.on('unlock-screen', () => {
+    addLog('INFO', 'Screen unlocked — refreshing usage.');
+    forceRefresh();
+  });
 });
 
 app.on('window-all-closed', e => e.preventDefault()); // keep alive in tray
