@@ -83,7 +83,9 @@ async function fetchUsage(sessionKey, orgId) {
     const er = extraRes.value;
     if (er.ok) {
       try {
-        const ed = JSON.parse(await er.text());
+        // Endpoint returns literal `null` for users without an overage configured;
+        // fall through to { enabled: false } via the `|| {}` rather than NPE on field access.
+        const ed = JSON.parse(await er.text()) || {};
         // New API fields with fallback to legacy names (upstream v2.6.0 fix)
         const limitCents = ed.monthly_credit_limit ?? ed.spend_limit_amount_cents;
         const usedCents  = ed.used_credits ?? ed.balance_cents ?? 0;
