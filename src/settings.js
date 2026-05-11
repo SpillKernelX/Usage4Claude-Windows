@@ -52,7 +52,6 @@ function populate() {
   // Advanced
   document.getElementById('launchAtLoginToggle').checked = settings.launchAtLogin;
   document.getElementById('checkUpdatesToggle').checked = settings.checkUpdates;
-  document.getElementById('updateRepoInput').value = settings.updateRepo || '';
   document.getElementById('hotkeyInput').value = settings.globalHotkey || '';
 
   renderAccountList();
@@ -238,7 +237,6 @@ document.getElementById('saveBtn').addEventListener('click', () => {
     telegramChatId: document.getElementById('telegramChatIdInput').value.trim(),
     launchAtLogin: document.getElementById('launchAtLoginToggle').checked,
     checkUpdates: document.getElementById('checkUpdatesToggle').checked,
-    updateRepo: document.getElementById('updateRepoInput').value.trim(),
     globalHotkey: document.getElementById('hotkeyInput').value.trim(),
     activeAccountIndex: settings.activeAccountIndex || 0,
   };

@@ -1,6 +1,6 @@
 {
   "name": "usage4claude",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Claude usage monitor for Windows",
   "main": "main.js",
   "scripts": {
@@ -22,6 +22,14 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "SpillKernelX",
+      "repo": "Usage4Claude-Windows"
     }
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.3"
   }
 }

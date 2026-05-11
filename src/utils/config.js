@@ -12,7 +12,6 @@ const store = new Store({
     notifyAt90: true,
     notifyOnReset: true,
     checkUpdates: true,
-    updateRepo: 'SpillKernelX/Usage4Claude-Windows',
     theme: 'system',           // 'system' | 'dark' | 'light'
     timeFormat: 'system',      // 'system' | '12h' | '24h'
     launchAtLogin: false,

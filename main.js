@@ -3,6 +3,7 @@ const {
   nativeTheme, shell, Notification, screen, dialog,
   globalShortcut, powerMonitor,
 } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('node:path');
 const fs   = require('node:fs');
 
@@ -44,7 +45,7 @@ function getNotifyState(orgId) {
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
-const CURRENT_VERSION = '1.0.0';
+const CURRENT_VERSION = '1.0.1';
 const MAX_HISTORY = 30;             // sparkline data points
 const DEBOUNCE_MS = 10_000;         // minimum interval between manual refreshes
 const MAX_LOG_ENTRIES = 500;        // circular log buffer size
@@ -72,6 +73,7 @@ app.whenReady().then(async () => {
   registerGlobalHotkey();
   scheduleRefresh(500);           // initial fetch
   scheduleWeeklySummary();        // weekly Telegram digest
+  setupAutoUpdater();
   if (config.get('checkUpdates')) {
     checkUpdates();
     // Re-check every 6 hours while running
@@ -214,15 +216,10 @@ function buildContextMenu() {
     { label: 'Settings…',           click: openSettings },
     { label: 'Diagnostics…',        click: openLogs },
     { label: 'Check for Updates',   click: () => checkUpdates(true) },
-    ...(updateInfo ? [
+    ...(updateInfo?.ready ? [
       { type: 'separator' },
-      { label: `Update available: v${updateInfo.version}`, click: () => {
-        // Validate URL before opening — only allow known GitHub releases path (HIGH-2)
-        const u = updateInfo.url;
-        if (typeof u === 'string' &&
-            /^https:\/\/github\.com\/[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+\/releases/.test(u))
-          shell.openExternal(u);
-      }},
+      { label: `Restart to install v${updateInfo.version}`,
+        click: () => autoUpdater.quitAndInstall() },
     ] : []),
     { type: 'separator' },
     { label: 'Quit', click: () => app.exit(0) },
@@ -550,31 +547,46 @@ function checkResetNotifications(usage) {
     });
 }
 
-// ── Update checker ────────────────────────────────────────────────────────
+// ── Update checker (electron-updater) ─────────────────────────────────────
+//
+// electron-updater reads `latest.yml` from the GitHub release matching
+// our package.json `build.publish` config. Auto-download is on; the
+// installer runs when the user picks "Restart to install" from the tray
+// or when the app quits naturally (autoInstallOnAppQuit).
 
-function versionGt(a, b) {
-  // Strip pre-release suffixes (e.g. '1.2.0-beta' → '1.2.0') before comparing (M4)
-  const pa = a.replace(/-.*$/, '').split('.').map(Number);
-  const pb = b.replace(/-.*$/, '').split('.').map(Number);
-  for (let i = 0; i < 3; i++) {
-    if ((pa[i] || 0) > (pb[i] || 0)) return true;
-    if ((pa[i] || 0) < (pb[i] || 0)) return false;
-  }
-  return false;
+function setupAutoUpdater() {
+  // Pipe updater logs into the in-app Diagnostics window
+  autoUpdater.logger = {
+    info:  m => addLog('INFO',  `[updater] ${m}`),
+    warn:  m => addLog('WARN',  `[updater] ${m}`),
+    error: m => addLog('ERROR', `[updater] ${typeof m === 'object' ? m.message || String(m) : m}`),
+    debug: () => {},
+  };
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('update-available',     info => addLog('INFO', `Update available: v${info.version} — downloading…`));
+  autoUpdater.on('update-not-available', info => addLog('INFO', `Up to date (v${info.version}).`));
+  autoUpdater.on('download-progress',    p    => addLog('INFO', `Downloading update: ${Math.round(p.percent)}%`));
+  autoUpdater.on('update-downloaded', info => {
+    updateInfo = { version: info.version, ready: true };
+    notify('Usage4Claude — Update Ready',
+      `v${info.version} will install when you quit, or pick "Restart to install" from the tray menu.`);
+  });
+  autoUpdater.on('error', err => addLog('ERROR', `Updater error: ${err.message}`));
 }
 
 async function checkUpdates(manual = false) {
-  const repo = config.get('updateRepo');
-  if (!repo) {
-    if (manual) notify('Usage4Claude', 'No update repository configured in Settings.');
+  // Skip when running from source — autoUpdater can't resolve a release file
+  // for an unpackaged build and would just log a 'no latest.yml' error.
+  if (!app.isPackaged) {
+    if (manual) notify('Usage4Claude', 'Update check skipped (running from source).');
     return;
   }
   try {
-    const latest = await api.checkForUpdate(repo);
-    if (latest && versionGt(latest, CURRENT_VERSION)) {
-      updateInfo = { version: latest, url: `https://github.com/${repo}/releases/latest` };
-      notify('Usage4Claude Update Available', `Version ${latest} is available.`);
-    } else if (manual) {
+    const result = await autoUpdater.checkForUpdates();
+    // If no newer version was found, show a confirmation only on manual checks
+    if (manual && result?.updateInfo && !result.downloadPromise) {
       notify('Usage4Claude', `You're up to date (v${CURRENT_VERSION}).`);
     }
   } catch (e) {
@@ -682,7 +694,6 @@ const SETTINGS_SCHEMA = {
   telegramChatId:     v => typeof v === 'string' && (v === '' || /^-?\d+$/.test(v)),
   launchAtLogin:      v => typeof v === 'boolean',
   checkUpdates:       v => typeof v === 'boolean',
-  updateRepo:         v => typeof v === 'string' && (v === '' || /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(v)),
   activeAccountIndex: v => Number.isInteger(v) && v >= 0,
   showRemainingMode:  v => typeof v === 'boolean',
   notificationsPausedUntil: v => typeof v === 'number' && v >= 0,

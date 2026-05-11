@@ -118,14 +118,4 @@ async function fetchUsage(sessionKey, orgId) {
   };
 }
 
-async function checkForUpdate(repo) {
-  if (!repo || !/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(repo)) return null;
-  const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
-    headers: { Accept: 'application/vnd.github+json' },
-  });
-  if (!res.ok) return null;
-  const data = await res.json();
-  return data.tag_name?.replace(/^v/, '') || null;
-}
-
-module.exports = { fetchOrganizations, fetchUsage, checkForUpdate };
+module.exports = { fetchOrganizations, fetchUsage };
