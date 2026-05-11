@@ -53,18 +53,32 @@ function populate() {
   document.getElementById('launchAtLoginToggle').checked = settings.launchAtLogin;
   document.getElementById('checkUpdatesToggle').checked = settings.checkUpdates;
   document.getElementById('updateRepoInput').value = settings.updateRepo || '';
+  document.getElementById('hotkeyInput').value = settings.globalHotkey || '';
 
   renderAccountList();
 }
 
 // ── Tabs ──────────────────────────────────────────────────────────────────
 
-document.querySelectorAll('.tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-    tab.classList.add('active');
-    document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+const allTabs = document.querySelectorAll('.tab');
+
+function activateTab(tab) {
+  allTabs.forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  tab.classList.add('active');
+  document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+  tab.focus();
+}
+
+allTabs.forEach((tab, i) => {
+  tab.setAttribute('tabindex', '0');
+  tab.setAttribute('role', 'tab');
+  tab.addEventListener('click', () => activateTab(tab));
+  tab.addEventListener('keydown', (e) => {
+    let target;
+    if (e.key === 'ArrowRight') target = allTabs[(i + 1) % allTabs.length];
+    else if (e.key === 'ArrowLeft') target = allTabs[(i - 1 + allTabs.length) % allTabs.length];
+    if (target) { e.preventDefault(); activateTab(target); }
   });
 });
 
@@ -147,12 +161,17 @@ document.getElementById('skToggle').addEventListener('click', () => {
 // ── Fetch orgs ────────────────────────────────────────────────────────────
 
 document.getElementById('fetchOrgsBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('fetchOrgsBtn');
+  if (btn.disabled) return; // debounce guard
   const sk = document.getElementById('skInput').value.trim();
   if (!sk) { setStatus('fetchStatus', 'Enter a session key first.', 'err'); return; }
+  if (sk.length > 4 && !sk.startsWith('sk-ant-')) {
+    setStatus('fetchStatus', 'Session key should start with "sk-ant-".', 'err'); return;
+  }
   setStatus('fetchStatus', 'Fetching…', '');
-  document.getElementById('fetchOrgsBtn').disabled = true;
+  btn.disabled = true;
   const result = await window.api.fetchOrgs(sk);
-  document.getElementById('fetchOrgsBtn').disabled = false;
+  btn.disabled = false;
   if (result.error) {
     setStatus('fetchStatus', result.error, 'err');
     return;
@@ -164,6 +183,7 @@ document.getElementById('fetchOrgsBtn').addEventListener('click', async () => {
     const opt = document.createElement('option');
     opt.value = i;
     opt.textContent = o.name;
+    opt.title = o.name; // tooltip for long org names
     sel.appendChild(opt);
   });
   if (fetchedOrgs.length) sel.value = '0';
@@ -219,6 +239,7 @@ document.getElementById('saveBtn').addEventListener('click', () => {
     launchAtLogin: document.getElementById('launchAtLoginToggle').checked,
     checkUpdates: document.getElementById('checkUpdatesToggle').checked,
     updateRepo: document.getElementById('updateRepoInput').value.trim(),
+    globalHotkey: document.getElementById('hotkeyInput').value.trim(),
     activeAccountIndex: settings.activeAccountIndex || 0,
   };
   window.api.saveSettings({ settings: newSettings, accounts });
@@ -263,7 +284,7 @@ document.getElementById('telegramTestBtn').addEventListener('click', async () =>
 
 document.getElementById('exportBtn').addEventListener('click', async () => {
   const result = await window.api.exportSettings();
-  if (result.ok) setStatus('backupStatus', 'Settings exported.', 'ok');
+  if (result.ok) setStatus('backupStatus', `Exported to ${result.path}`, 'ok');
   else if (result.error) setStatus('backupStatus', 'Export failed: ' + result.error, 'err');
 });
 

@@ -28,7 +28,7 @@
       --card-bg:   #1c1c1e;
       --border:    rgba(255,255,255,0.1);
       --row-bg:    #2c2c2e;
-      --row-hover: #3a3a3c;
+      --row-hover: #45454a;
       --text:      #f5f5f7;
       --subtext:   #8e8e93;
       --ring-track:#3a3a3c;
@@ -185,12 +185,30 @@
     font-weight: 450;
   }
 
+  /* Limit rows are clickable to toggle remaining/reset time */
+  #rows { cursor: pointer; }
+
   .row-value {
     font-size: 13px;
     color: var(--text);
     font-weight: 600;
     text-align: right;
     white-space: nowrap;
+  }
+
+  /* ── Toggle slide animation (remaining ↔ reset time) ── */
+  .row-value.slide-out {
+    animation: slideOut 0.18s ease-in-out forwards;
+  }
+  .row-value.slide-in {
+    animation: slideIn 0.18s ease-in-out forwards;
+  }
+  @keyframes slideOut {
+    to { transform: translateY(6px); opacity: 0; }
+  }
+  @keyframes slideIn {
+    from { transform: translateY(-6px); opacity: 0; }
+    to   { transform: translateY(0); opacity: 1; }
   }
 
   /* ── Footer ── */
@@ -256,7 +274,24 @@
     font-size: 12px;
     color: #ef4444;
     margin: 0 12px 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
+  .error-row span { flex: 1; }
+  .error-copy {
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    color: #ef4444;
+    cursor: pointer;
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    opacity: 0.7;
+    transition: opacity 0.15s;
+  }
+  .error-copy:hover { opacity: 1; background: rgba(248,113,113,0.15); }
 
   /* ── Sparkline ── */
   .sparkline-wrap {
@@ -283,6 +318,83 @@
     vertical-align: middle;
   }
 
+  /* ── Pin button ── */
+  .icon-btn.pinned { color: var(--accent); }
+
+  /* ── Compact mode ── */
+  body.compact .rows,
+  body.compact .sparkline-wrap,
+  body.compact .overclock-row,
+  body.compact .projection-row,
+  body.compact .pause-menu,
+  body.compact .reauth-banner { display: none !important; }
+  body.compact .ring-section { padding-bottom: 8px; }
+  .compact-toggle {
+    font-size: 10px;
+    color: var(--subtext);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0 4px;
+    opacity: 0.6;
+    transition: opacity 0.15s;
+  }
+  .compact-toggle:hover { opacity: 1; }
+
+  /* ── Projection + status badges ── */
+  .projection-row {
+    padding: 0 12px 6px;
+    font-size: 11px;
+    color: var(--subtext);
+    display: none;
+  }
+  .projection-row.warn { color: #f97316; }
+
+  .reauth-banner {
+    background: rgba(249,115,22,0.12);
+    border-radius: 10px;
+    padding: 8px 12px;
+    font-size: 12px;
+    color: #f97316;
+    margin: 0 12px 8px;
+    display: none;
+    cursor: pointer;
+  }
+  .reauth-banner:hover { background: rgba(249,115,22,0.18); }
+
+  .muted-badge {
+    display: none;
+    font-size: 10px;
+    font-weight: 600;
+    color: #8e8e93;
+    background: var(--row-bg);
+    border-radius: 4px;
+    padding: 1px 5px;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+
+  /* ── Pause menu ── */
+  .pause-menu {
+    display: none;
+    padding: 4px 12px 8px;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+  .pause-menu.visible { display: flex; }
+  .pause-chip {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    border: none;
+    background: var(--row-bg);
+    color: var(--text);
+    cursor: pointer;
+    transition: background 0.12s;
+  }
+  .pause-chip:hover { background: var(--row-hover); }
+  .pause-chip.active { background: #f97316; color: white; }
+
   /* ── Overclock row ── */
   .overclock-row {
     display: none;
@@ -305,6 +417,11 @@
     <span class="header-title">Claude Usage</span>
     <span class="header-account" id="accountLabel"></span>
     <div class="header-btns">
+      <button class="icon-btn" id="pinBtn" title="Pin popup (keep visible)" aria-label="Pin popup">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 17v5"/><path d="M5 17h14"/><path d="M15 3.5L9 9l1.5 7L17 9.5z"/>
+        </svg>
+      </button>
       <button class="icon-btn" id="refreshBtn" title="Refresh" aria-label="Refresh usage data">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 .49-3.75"/>
@@ -331,6 +448,9 @@
     </div>
   </div>
 
+  <!-- Reauth banner -->
+  <div class="reauth-banner" id="reauthBanner" title="Click to open Settings">Session expired — click to re-authenticate</div>
+
   <!-- Error banner -->
   <div class="error-row" id="errorRow" style="display:none"></div>
 
@@ -351,9 +471,23 @@
   <!-- Limit rows -->
   <div class="rows" id="rows"></div>
 
+  <!-- Quota projection -->
+  <div class="projection-row" id="projectionRow"></div>
+
+  <!-- Pause notifications menu -->
+  <div class="pause-menu" id="pauseMenu">
+    <button class="pause-chip" data-ms="900000">15m</button>
+    <button class="pause-chip" data-ms="1800000">30m</button>
+    <button class="pause-chip" data-ms="3600000">1h</button>
+    <button class="pause-chip" data-ms="14400000">4h</button>
+    <button class="pause-chip" data-ms="0" id="resumeChip" style="display:none">Resume</button>
+  </div>
+
   <!-- Footer -->
   <div class="footer">
-    <span class="last-updated" id="lastUpdated">—</span>
+    <span class="last-updated" id="lastUpdated">—<span class="muted-badge" id="mutedBadge">MUTED</span></span>
+    <button class="compact-toggle" id="compactBtn" title="Toggle compact view" aria-label="Toggle compact view">▼</button>
+    <button class="settings-btn" id="pauseBtn" title="Pause notifications" aria-label="Pause notifications" style="font-size:14px;padding:2px 6px">🔔</button>
     <button class="settings-btn" id="settingsBtn">Settings</button>
   </div>
 </div>

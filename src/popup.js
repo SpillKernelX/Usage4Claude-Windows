@@ -48,6 +48,18 @@ function squareIcon(color, pct) {
   </svg>`;
 }
 
+// ── Currency formatting ───────────────────────────────────────────────────
+
+function currencySymbol(code) {
+  try {
+    // Use Intl to resolve the symbol for any currency code (USD→$, EUR→€, GBP→£, etc.)
+    const parts = new Intl.NumberFormat('en', { style: 'currency', currency: code || 'USD' }).formatToParts(0);
+    return parts.find(p => p.type === 'currency')?.value || code || '$';
+  } catch {
+    return code || '$';
+  }
+}
+
 // ── Ring chart ────────────────────────────────────────────────────────────
 
 function buildRings(usage) {
@@ -150,32 +162,46 @@ function formatResetTime(resetsAt, style) {
   const hour12 = _timeFormat === 'system' ? undefined : _timeFormat === '12h';
   const timeStr = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12 });
 
-  // Build countdown suffix for positive remaining time
-  let countdown = '';
-  if (diffMs > 0) {
-    const totalMin = Math.floor(diffMs / 60000);
-    const hrs = Math.floor(totalMin / 60);
-    const mins = totalMin % 60;
-    countdown = hrs > 0 ? ` (${hrs}h ${mins}m)` : ` (${mins}m)`;
-  }
-
   // Format date as "24 Mar 26" (day month-short 2-digit-year)
   const dateStr = `${d.getDate()} ${d.toLocaleString([], { month: 'short' })} ${String(d.getFullYear()).slice(-2)}`;
 
   if (style === 'short') {
-    if (isToday) return `Today ${timeStr}${countdown}`;
-    if (isTomorrow) return `Tmrw ${timeStr}${countdown}`;
+    if (isToday) return `Today ${timeStr}`;
+    if (isTomorrow) return `Tmrw ${timeStr}`;
     return dateStr;
   }
   const hourStr = d.toLocaleTimeString([], { hour: 'numeric', hour12 });
-  if (isToday) return `Today ${hourStr}${countdown}`;
-  if (isTomorrow) return `Tmrw ${hourStr}${countdown}`;
+  if (isToday) return `Today ${hourStr}`;
+  if (isTomorrow) return `Tmrw ${hourStr}`;
   return dateStr;
 }
 
+function formatRemaining(resetsAt) {
+  if (!resetsAt) return '—';
+  const diffMs = new Date(resetsAt) - Date.now();
+  if (diffMs <= 0) return '—';
+  const totalMin = Math.floor(diffMs / 60000);
+  const d = Math.floor(totalMin / 1440);
+  const h = Math.floor((totalMin % 1440) / 60);
+  const m = totalMin % 60;
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
 // ── Overclock / Baseline status ──────────────────────────────────────────
+// The 2x usage boost promotion ran March 13–28, 2026 PT.
+// Off-peak (overclocked): weekends all day, weekdays outside 5–11 AM PT.
+// After the promotion ends, the row is hidden.
 
 let _overclockTimer = null;
+
+// Promotion window (Pacific Time)
+const PROMO_END = new Date('2026-03-29T07:59:00Z'); // Mar 28 11:59 PM PT = Mar 29 07:59 UTC
+
+function isPromoActive() {
+  return Date.now() < PROMO_END.getTime();
+}
 
 function getOverclockStateLocal() {
   const now = new Date();
@@ -191,7 +217,7 @@ function getOverclockStateLocal() {
   let targetHour, targetDayOffset;
   if (isOverclocked) {
     if (isWeekend) {
-      targetDayOffset = ptDay === 0 ? 1 : 2; // Sun→Mon=1 day, Sat→Mon=2 days
+      targetDayOffset = ptDay === 0 ? 1 : 2;
     } else {
       targetDayOffset = (ptHour >= 11) ? 1 : 0;
     }
@@ -204,7 +230,13 @@ function getOverclockStateLocal() {
   const target = new Date(pt);
   target.setDate(target.getDate() + targetDayOffset);
   target.setHours(targetHour, 0, 0, 0);
-  const transitionMs = Math.max(0, target - pt);
+  let transitionMs = Math.max(0, target - pt);
+
+  // Cap countdown to promo end if transition is after promo end
+  const msUntilPromoEnd = PROMO_END.getTime() - now.getTime();
+  if (isOverclocked && transitionMs > msUntilPromoEnd) {
+    transitionMs = Math.max(0, msUntilPromoEnd);
+  }
 
   return {
     isOverclocked,
@@ -214,7 +246,6 @@ function getOverclockStateLocal() {
   };
 }
 
-// Bolt icon for overclocked, dash icon for baseline (matches row-icon 18×18 style)
 function boltIcon(color) {
   return `<svg width="18" height="18" viewBox="0 0 18 18">
     <path d="M10 2L4 10h4.5l-1 6 6.5-8H9.5L10 2z" fill="none" stroke="${color}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>
@@ -238,12 +269,18 @@ function formatCountdown(ms) {
 
 function updateOverclockRow() {
   const row = document.getElementById('overclockRow');
-  const oc = getOverclockStateLocal();
 
+  // Hide row entirely if promotion has ended
+  if (!isPromoActive()) {
+    row.style.display = 'none';
+    if (_overclockTimer) { clearInterval(_overclockTimer); _overclockTimer = null; }
+    return;
+  }
+
+  const oc = getOverclockStateLocal();
   row.style.display = 'flex';
 
   const color = oc.isOverclocked ? '#e8a020' : '#8e8e93';
-  // icon and label are author-controlled constants — safe for innerHTML
   document.getElementById('overclockIcon').innerHTML =
     oc.isOverclocked ? boltIcon(color) : dashIcon(color);
   document.getElementById('overclockLabel').textContent =
@@ -251,23 +288,30 @@ function updateOverclockRow() {
   document.getElementById('overclockCountdown').textContent = formatCountdown(oc.transitionMs);
 }
 
-function startOverclockTimer() {
-  if (_overclockTimer) clearInterval(_overclockTimer);
-  updateOverclockRow();
-  _overclockTimer = setInterval(updateOverclockRow, 1000);
-}
+// ── Time display toggle (remaining ↔ reset) ─────────────────────────────
+
+let _showRemaining = false;
+let _lastState = null; // cached for animated re-render after toggle
 
 // ── Render ────────────────────────────────────────────────────────────────
 
 function render(state) {
   const { usage, error, account, lastFetched, timeFormat } = state;
 
+  // Compact mode
+  const isCompact = state.compactMode || false;
+  document.body.classList.toggle('compact', isCompact);
+  document.getElementById('compactBtn').textContent = isCompact ? '▲' : '▼';
+
+  // Pin state
+  document.getElementById('pinBtn').classList.toggle('pinned', state.pinPopup || false);
+
   document.getElementById('accountLabel').textContent =
     state.multiAccount ? (account?.alias || account?.orgName || '') : '';
 
   const errorRow = document.getElementById('errorRow');
   if (error) {
-    errorRow.style.display = 'block';
+    errorRow.style.display = 'flex';
     // Better error messages with actionable guidance
     let errorMsg = error;
     if (error === 'Not configured') errorMsg = 'No accounts added. Open Settings to add one.';
@@ -277,7 +321,18 @@ function render(state) {
       errorMsg = 'Blocked by Cloudflare. Try again in a few minutes.';
     else if (error.includes('429') || error.includes('RATE_LIMIT'))
       errorMsg = 'Rate limited. Will retry automatically.';
-    errorRow.textContent = errorMsg;
+    errorRow.innerHTML = '';
+    const msgSpan = document.createElement('span');
+    msgSpan.textContent = '\u26A0 ' + errorMsg;
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'error-copy';
+    copyBtn.textContent = 'Copy';
+    copyBtn.title = 'Copy error to clipboard';
+    copyBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(errorMsg).then(() => { copyBtn.textContent = 'Copied'; setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500); });
+    });
+    errorRow.append(msgSpan, copyBtn);
   } else {
     errorRow.style.display = 'none';
   }
@@ -331,12 +386,14 @@ function render(state) {
 
     let valueStr;
     if (timeStyle === 'money') {
-      valueStr = data.enabled
-        ? `$${data.used.toFixed(0)}/$${data.limit.toFixed(0)}`
-        : null;
-      if (!valueStr) return;
+      if (!data.enabled) return;
+      const sym = currencySymbol(data.currency);
+      valueStr = `${sym}${data.used.toFixed(0)}/${sym}${data.limit.toFixed(0)}`;
+      if (data.outOfCredits) valueStr += ' \u26A0'; // ⚠ out of credits
     } else {
-      valueStr = formatResetTime(data.resetsAt, timeStyle);
+      valueStr = _showRemaining
+        ? formatRemaining(data.resetsAt)
+        : formatResetTime(data.resetsAt, timeStyle);
     }
 
     // Generate icon with percentage inside (upstream v2.6.0 feature)
@@ -354,6 +411,59 @@ function render(state) {
     rows.appendChild(row);
   });
 
+  // Quota projection — estimate time to 100% based on sparkline trend
+  const projRow = document.getElementById('projectionRow');
+  const hist = state.history;
+  if (hist && hist.length >= 3 && displayUsage) {
+    const primary = displayUsage.fiveHour || displayUsage.sevenDay;
+    if (primary && primary.percentage < 100 && primary.resetsAt) {
+      // Linear regression on last N points to get rate (% per data point)
+      const n = hist.length;
+      const latest = hist[n - 1];
+      const oldest = hist[0];
+      const ratePerPoint = (latest - oldest) / (n - 1);
+      if (ratePerPoint > 0.5) { // meaningful upward trend
+        const remaining = 100 - latest;
+        const pointsTo100 = remaining / ratePerPoint;
+        // Each point ≈ 1 refresh interval (configured minutes)
+        const refreshMin = 3; // approximate
+        const minsTo100 = pointsTo100 * refreshMin;
+        const resetMs = new Date(primary.resetsAt) - Date.now();
+        const resetMin = resetMs / 60000;
+        if (minsTo100 < resetMin) {
+          // Will hit 100% before reset
+          const h = Math.floor(minsTo100 / 60);
+          const m = Math.round(minsTo100 % 60);
+          const etaStr = h > 0 ? `${h}h ${m}m` : `${m}m`;
+          projRow.textContent = `\u26A0 At current rate, 100% in ~${etaStr} (before reset)`;
+          projRow.className = 'projection-row warn';
+          projRow.style.display = 'block';
+        } else {
+          projRow.style.display = 'none';
+        }
+      } else {
+        projRow.style.display = 'none';
+      }
+    } else {
+      projRow.style.display = 'none';
+    }
+  } else {
+    projRow.style.display = 'none';
+  }
+
+  // Reauth banner
+  const reauthBanner = document.getElementById('reauthBanner');
+  reauthBanner.style.display = state.needsReauth ? 'block' : 'none';
+
+  // Muted badge + pause button state
+  const pausedUntil = state.notificationsPausedUntil || 0;
+  const isPaused = pausedUntil && Date.now() < pausedUntil;
+  document.getElementById('mutedBadge').style.display = isPaused ? 'inline-block' : 'none';
+  document.getElementById('pauseBtn').textContent = isPaused ? '🔕' : '🔔';
+  document.getElementById('resumeChip').style.display = isPaused ? 'inline-block' : 'none';
+  // Highlight active pause chip
+  document.querySelectorAll('#pauseMenu .pause-chip').forEach(c => c.classList.remove('active'));
+
   // Show "Updated" timestamp with offline badge if using cached data
   const updatedEl = document.getElementById('lastUpdated');
   const ts = lastFetched || displayUsage?.fetchedAt;
@@ -370,22 +480,35 @@ function render(state) {
 
 // ── IPC ───────────────────────────────────────────────────────────────────
 
-// Start overclock countdown once — it reads wall-clock time independently of IPC
-startOverclockTimer();
+// Start/stop overclock timer based on popup visibility to avoid wasted DOM updates
+updateOverclockRow(); // show initial state immediately
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    if (_overclockTimer) { clearInterval(_overclockTimer); _overclockTimer = null; }
+  } else {
+    updateOverclockRow();
+    if (!_overclockTimer) _overclockTimer = setInterval(updateOverclockRow, 1000);
+  }
+});
+// Start ticking since popup opens visible
+_overclockTimer = setInterval(updateOverclockRow, 1000);
 
-let _lastCachedUsage = null;
+const _cachedUsageByAccount = {}; // per-account offline cache
 
 window.api.onState(state => {
   if (state.timeFormat) _timeFormat = state.timeFormat;
+  if (state.showRemaining != null) _showRemaining = state.showRemaining;
 
-  // Cache last good usage data for offline fallback
-  if (state.usage) _lastCachedUsage = state.usage;
+  // Cache last good usage data per account for offline fallback
+  const orgId = state.account?.orgId;
+  if (state.usage && orgId) _cachedUsageByAccount[orgId] = state.usage;
 
-  // Inject cached data when current fetch failed
-  if (!state.usage && _lastCachedUsage) {
-    state._cachedUsage = _lastCachedUsage;
+  // Inject correct account's cached data when current fetch failed
+  if (!state.usage && orgId && _cachedUsageByAccount[orgId]) {
+    state._cachedUsage = _cachedUsageByAccount[orgId];
   }
 
+  _lastState = state;
   render(state);
 
   // Stop refresh spinner when state arrives
@@ -406,6 +529,67 @@ document.addEventListener('keydown', (e) => {
     document.getElementById('refreshBtn').classList.add('spinning');
     window.api.refresh();
   }
+});
+
+// Toggle remaining ↔ reset time on rows click (with slide animation)
+document.getElementById('rows').addEventListener('click', () => {
+  if (!_lastState) return;
+  const valueEls = document.querySelectorAll('#rows .row-value');
+  if (!valueEls.length) return;
+
+  // Phase 1: slide out
+  valueEls.forEach(el => el.classList.add('slide-out'));
+
+  setTimeout(() => {
+    // Toggle mode and persist
+    _showRemaining = !_showRemaining;
+    window.api.setShowRemaining(_showRemaining);
+
+    // Re-render with new mode (updates text content)
+    render(_lastState);
+
+    // Phase 2: slide in
+    const newValueEls = document.querySelectorAll('#rows .row-value');
+    newValueEls.forEach(el => {
+      el.classList.add('slide-in');
+      el.addEventListener('animationend', () => el.classList.remove('slide-in'), { once: true });
+    });
+  }, 180); // match slideOut duration
+});
+
+// Compact mode toggle
+document.getElementById('compactBtn').addEventListener('click', () => {
+  if (!_lastState) return;
+  const newVal = !(_lastState.compactMode || false);
+  _lastState.compactMode = newVal;
+  window.api.setCompactMode(newVal);
+  render(_lastState);
+});
+
+// Pin popup toggle
+document.getElementById('pinBtn').addEventListener('click', () => {
+  if (!_lastState) return;
+  const newVal = !(_lastState.pinPopup || false);
+  _lastState.pinPopup = newVal;
+  window.api.setPinPopup(newVal);
+  render(_lastState);
+});
+
+// Reauth banner opens settings
+document.getElementById('reauthBanner').addEventListener('click', () =>
+  window.api.openSettings());
+
+// Pause notifications toggle menu
+document.getElementById('pauseBtn').addEventListener('click', () => {
+  document.getElementById('pauseMenu').classList.toggle('visible');
+});
+
+document.querySelectorAll('#pauseMenu .pause-chip').forEach(chip => {
+  chip.addEventListener('click', () => {
+    const ms = parseInt(chip.dataset.ms);
+    window.api.pauseNotifications(ms);
+    document.getElementById('pauseMenu').classList.remove('visible');
+  });
 });
 
 document.getElementById('settingsBtn').addEventListener('click', () =>

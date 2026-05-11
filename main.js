@@ -1,6 +1,7 @@
 const {
   app, BrowserWindow, Tray, Menu, ipcMain,
   nativeTheme, shell, Notification, screen, dialog,
+  globalShortcut,
 } = require('electron');
 const path = require('node:path');
 const fs   = require('node:fs');
@@ -27,16 +28,35 @@ let lastError = null;
 let refreshTimer = null;
 let updateInfo = null;
 let logs = [];
-const prevResetsAt = {};
-const prevPct = {};
-const notified90 = new Set();
 let lastRefreshTime = 0;
+let trayFlashTimer = null;
+let trayFlashVisible = true;
 
-// Usage history — stores last 30 primary percentages for sparkline
-let usageHistory = [];
-const MAX_HISTORY = 30;
+// Per-account notification state — keyed by orgId to avoid cross-account false positives
+const accountNotifyState = {}; // { [orgId]: { prevResetsAt, prevPct, notified90 } }
+
+function getNotifyState(orgId) {
+  if (!accountNotifyState[orgId]) {
+    accountNotifyState[orgId] = { prevResetsAt: {}, prevPct: {}, notified90: new Set() };
+  }
+  return accountNotifyState[orgId];
+}
+
+// ── Constants ─────────────────────────────────────────────────────────────
 
 const CURRENT_VERSION = '1.0.0';
+const MAX_HISTORY = 30;             // sparkline data points
+const DEBOUNCE_MS = 10_000;         // minimum interval between manual refreshes
+const MAX_LOG_ENTRIES = 500;        // circular log buffer size
+const SMART_REFRESH_HIGH_PCT = 85;  // speed up refresh above this %
+const SMART_REFRESH_MID_PCT = 70;   // moderate speed-up above this %
+const SMART_REFRESH_NEAR_RESET = 600;   // seconds — <10 min to reset
+const SMART_REFRESH_MID_RESET = 1800;   // seconds — <30 min to reset
+const UPDATE_CHECK_INTERVAL = 6 * 60 * 60 * 1000; // 6 hours
+
+// Per-account usage history for sparkline — keyed by orgId
+const usageHistoryByAccount = {};
+let activeOrgIdForHistory = null; // tracks which account's history to send
 
 // ── App lifecycle ─────────────────────────────────────────────────────────
 
@@ -49,11 +69,33 @@ app.whenReady().then(async () => {
   app.setAppUserModelId('com.usage4claude.app');
   nativeTheme.themeSource = config.get('theme') || 'system';
   await createTray();
+  registerGlobalHotkey();
   scheduleRefresh(500);           // initial fetch
-  if (config.get('checkUpdates')) checkUpdates();
+  scheduleWeeklySummary();        // weekly Telegram digest
+  if (config.get('checkUpdates')) {
+    checkUpdates();
+    // Re-check every 6 hours while running
+    setInterval(() => checkUpdates(), UPDATE_CHECK_INTERVAL);
+  }
 });
 
 app.on('window-all-closed', e => e.preventDefault()); // keep alive in tray
+
+// ── Global hotkey ─────────────────────────────────────────────────────────
+
+function registerGlobalHotkey() {
+  globalShortcut.unregisterAll();
+  const hotkey = config.get('globalHotkey');
+  if (!hotkey) return;
+  try {
+    globalShortcut.register(hotkey, () => togglePopup());
+    addLog('INFO', `Global hotkey registered: ${hotkey}`);
+  } catch (e) {
+    addLog('WARN', `Failed to register hotkey "${hotkey}": ${e.message}`);
+  }
+}
+
+app.on('will-quit', () => globalShortcut.unregisterAll());
 
 // ── Tray ──────────────────────────────────────────────────────────────────
 
@@ -84,6 +126,46 @@ function updateTrayIcon() {
       }
     })
     .catch(() => {});
+
+  // Flash tray icon when any limit is ≥90%
+  const anyHigh = usageData && [usageData.fiveHour, usageData.sevenDay, usageData.opus, usageData.sonnet]
+    .some(d => d && d.percentage >= 90);
+  if (anyHigh && !trayFlashTimer) {
+    startTrayFlash();
+  } else if (!anyHigh && trayFlashTimer) {
+    stopTrayFlash();
+  }
+}
+
+function startTrayFlash() {
+  if (trayFlashTimer) return;
+  trayFlashVisible = true;
+  const { nativeImage } = require('electron');
+  const emptyIcon = nativeImage.createEmpty();
+  trayFlashTimer = setInterval(() => {
+    if (!tray || tray.isDestroyed()) { stopTrayFlash(); return; }
+    trayFlashVisible = !trayFlashVisible;
+    if (trayFlashVisible) {
+      updateTrayIconImage(); // restore real icon
+    } else {
+      tray.setImage(emptyIcon);
+    }
+  }, 800);
+}
+
+function stopTrayFlash() {
+  if (trayFlashTimer) { clearInterval(trayFlashTimer); trayFlashTimer = null; }
+  trayFlashVisible = true;
+  updateTrayIconImage(); // restore real icon
+}
+
+function updateTrayIconImage() {
+  const mode = config.get('displayMode') || 'combined';
+  const mono = config.get('monochrome') || false;
+  const pct  = usageData?.fiveHour?.percentage ?? usageData?.sevenDay?.percentage ?? null;
+  makeTrayIcon({ pct, error: !!lastError && !usageData, monochrome: mono, mode })
+    .then(img => { if (tray && !tray.isDestroyed()) tray.setImage(img); })
+    .catch(() => {});
 }
 
 function buildTooltip() {
@@ -106,7 +188,7 @@ function buildContextMenu() {
   const accountItems = config.getAccounts().map((acc, i) => ({
     label: (i === (config.get('activeAccountIndex') || 0) ? '● ' : '○ ') +
            (acc.alias || acc.orgName || `Account ${i + 1}`),
-    click: () => { config.switchAccount(i); notified90.clear(); forceRefresh(); },
+    click: () => { config.switchAccount(i); forceRefresh(); },
   }));
 
   const items = [
@@ -156,7 +238,9 @@ function createPopup() {
     },
   });
   popupWin.loadFile(path.join(__dirname, 'src/popup.html'));
-  popupWin.on('blur', () => { if (popupWin && !popupWin.isDestroyed()) popupWin.hide(); });
+  popupWin.on('blur', () => {
+    if (popupWin && !popupWin.isDestroyed() && !config.get('pinPopup')) popupWin.hide();
+  });
   popupWin.on('closed', () => { popupWin = null; });
 }
 
@@ -208,14 +292,20 @@ function positionPopup() {
 function sendStateToPopup() {
   if (!popupWin || !popupWin.isVisible()) return;
   const acc = config.getActiveAccount();
+  const orgId = acc?.orgId;
   popupWin.webContents.send('state', {
     usage: usageData,
     error: lastError,
-    account: acc ? { alias: acc.alias, orgName: acc.orgName } : null,
+    account: acc ? { alias: acc.alias, orgName: acc.orgName, orgId } : null,
     multiAccount: config.getAccounts().length > 1,
     lastFetched: usageData?.fetchedAt || null,
     timeFormat: config.get('timeFormat') || 'system',
-    history: usageHistory,
+    showRemaining: config.get('showRemainingMode') || false,
+    history: orgId ? (usageHistoryByAccount[orgId] || []) : [],
+    needsReauth: orgId ? (getNotifyState(orgId).authFailCount >= 3) : false,
+    notificationsPausedUntil: config.get('notificationsPausedUntil') || 0,
+    compactMode: config.get('compactMode') || false,
+    pinPopup: config.get('pinPopup') || false,
   });
 }
 
@@ -263,7 +353,7 @@ function openLogs() {
 
 function triggerRefresh() {
   const now = Date.now();
-  if (now - lastRefreshTime < 10_000) return; // 10-second debounce
+  if (now - lastRefreshTime < DEBOUNCE_MS) return;
   lastRefreshTime = now; // set immediately so concurrent calls are blocked (H6)
   if (refreshTimer) clearTimeout(refreshTimer);
   doRefresh();
@@ -291,6 +381,7 @@ async function doRefresh() {
   lastError = null;
   const acc = config.getActiveAccount();
   const sk  = config.getSessionKey(acc);
+  activeOrgIdForHistory = acc.orgId;
   addLog('INFO', `Refreshing usage for '${acc.alias || acc.orgName}'…`);
 
   try {
@@ -300,16 +391,31 @@ async function doRefresh() {
     check90Notifications(data);
     addLog('INFO', `Usage fetched — primary: ${Math.round(data.fiveHour?.percentage ?? data.sevenDay?.percentage ?? 0)}%`);
 
-    // Record history for sparkline
+    // Record per-account history for sparkline
     const pct = data.fiveHour?.percentage ?? data.sevenDay?.percentage ?? null;
     if (pct !== null) {
-      usageHistory.push(Math.round(pct));
-      if (usageHistory.length > MAX_HISTORY) usageHistory.shift();
+      if (!usageHistoryByAccount[acc.orgId]) usageHistoryByAccount[acc.orgId] = [];
+      const hist = usageHistoryByAccount[acc.orgId];
+      hist.push(Math.round(pct));
+      if (hist.length > MAX_HISTORY) hist.shift();
     }
+
+    // Track consecutive auth failures — reset on success
+    const ns = getNotifyState(acc.orgId);
+    ns.authFailCount = 0;
   } catch (err) {
     lastError = err.message;
     addLog('ERROR', err.message);
-    if (err.code === 'AUTH') notify('Claude Usage — Auth Error', err.message);
+    if (err.code === 'AUTH') {
+      // Track consecutive auth failures for session expiry warning
+      const ns = getNotifyState(acc.orgId);
+      ns.authFailCount = (ns.authFailCount || 0) + 1;
+      if (ns.authFailCount >= 3 && !ns.authWarned) {
+        ns.authWarned = true;
+        notify('Claude Usage — Session Expired', `Re-authenticate '${acc.alias || acc.orgName}' in Settings.`);
+        sendTelegramNotification(`Claude session expired for '${acc.alias || acc.orgName}' — please re-auth in app.`);
+      }
+    }
   }
 
   updateTrayIcon();
@@ -324,8 +430,12 @@ function computeInterval() {
   if (!primary) return base;
   const pct = primary.percentage;
   const secs = primary.resetsAt ? (new Date(primary.resetsAt) - Date.now()) / 1000 : null;
-  if (pct >= 85 || (secs !== null && secs < 600))  return 60;
-  if (pct >= 70 || (secs !== null && secs < 1800)) return Math.min(base, 180);
+
+  // Auto-pause: if usage just reset (≤2%), slow down to save API calls
+  if (pct <= 2 && secs !== null && secs > SMART_REFRESH_MID_RESET) return Math.max(base, 600); // 10 min minimum
+
+  if (pct >= SMART_REFRESH_HIGH_PCT || (secs !== null && secs < SMART_REFRESH_NEAR_RESET))  return 60;
+  if (pct >= SMART_REFRESH_MID_PCT || (secs !== null && secs < SMART_REFRESH_MID_RESET)) return Math.min(base, 180);
   return base;
 }
 
@@ -341,10 +451,11 @@ async function sendTelegramNotification(msg) {
   const chatId = config.get('telegramChatId');
   if (!token || !chatId) return;
   try {
+    // JSON.stringify handles escaping of special chars in the text field
     const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text: msg }),
+      body: JSON.stringify({ chat_id: chatId, text: String(msg) }),
     });
     const data = await res.json();
     if (!data.ok) addLog('WARN', `Telegram notification failed: ${data.description || res.status}`);
@@ -353,8 +464,18 @@ async function sendTelegramNotification(msg) {
   }
 }
 
+function isNotificationsPaused() {
+  const until = config.get('notificationsPausedUntil') || 0;
+  if (until && Date.now() < until) return true;
+  if (until && Date.now() >= until) config.set('notificationsPausedUntil', 0); // auto-clear
+  return false;
+}
+
 function check90Notifications(usage) {
-  if (!config.get('notifyAt90')) return;
+  if (!config.get('notifyAt90') || isNotificationsPaused()) return;
+  const acc = config.getActiveAccount();
+  if (!acc) return;
+  const ns = getNotifyState(acc.orgId);
 
   // Per-limit mute list (from settings)
   const mutedLimits = config.get('mutedLimits') || [];
@@ -371,8 +492,8 @@ function check90Notifications(usage) {
 
       if (data.percentage >= threshold) {
         const bucket = `${key}_${Math.floor(data.percentage / 10) * 10}`;
-        if (!notified90.has(bucket)) {
-          notified90.add(bucket);
+        if (!ns.notified90.has(bucket)) {
+          ns.notified90.add(bucket);
           notify('Claude Usage Warning', `${key.toUpperCase()} usage is at ${Math.round(data.percentage)}%!`);
           sendTelegramNotification(`Claude ${key.toUpperCase()} usage at ${Math.round(data.percentage)}% — quota nearly full.`);
         }
@@ -383,12 +504,16 @@ function check90Notifications(usage) {
 }
 
 function checkResetNotifications(usage) {
-  if (!config.get('notifyOnReset')) return;
+  if (!config.get('notifyOnReset') || isNotificationsPaused()) return;
+  const acc = config.getActiveAccount();
+  if (!acc) return;
+  const ns = getNotifyState(acc.orgId);
+
   [['5h', usage.fiveHour], ['7d', usage.sevenDay], ['opus', usage.opus], ['sonnet', usage.sonnet]]
     .forEach(([key, data]) => {
       if (!data) return;
-      const prevReset = prevResetsAt[key];
-      const prevP     = prevPct[key] ?? null;
+      const prevReset = ns.prevResetsAt[key];
+      const prevP     = ns.prevPct[key] ?? null;
       const curr      = data.resetsAt ? new Date(data.resetsAt) : null;
       const pct       = data.percentage;
 
@@ -406,10 +531,10 @@ function checkResetNotifications(usage) {
           const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
           sendTelegramNotification(`Claude ${key.toUpperCase()} quota reset at ${time} — your allowance has refreshed.`);
         }
-        for (const k of [...notified90]) if (k.startsWith(`${key}_`)) notified90.delete(k);
+        for (const k of [...ns.notified90]) if (k.startsWith(`${key}_`)) ns.notified90.delete(k);
       }
-      prevResetsAt[key] = data.resetsAt;
-      prevPct[key] = pct;
+      ns.prevResetsAt[key] = data.resetsAt;
+      ns.prevPct[key] = pct;
     });
 }
 
@@ -443,6 +568,40 @@ async function checkUpdates(manual = false) {
   } catch (e) {
     if (manual) notify('Usage4Claude', `Update check failed: ${e.message}`);
   }
+}
+
+// ── Weekly summary ────────────────────────────────────────────────────────
+
+function scheduleWeeklySummary() {
+  // Check every hour if it's Sunday 8 PM local and we haven't sent this week
+  setInterval(() => {
+    const now = new Date();
+    if (now.getDay() !== 0 || now.getHours() !== 20) return; // Sunday 8 PM
+    const token = config.get('telegramBotToken');
+    const chatId = config.get('telegramChatId');
+    if (!token || !chatId) return;
+
+    const weekKey = `${now.getFullYear()}-W${Math.ceil(now.getDate() / 7)}`;
+    const lastSent = config.get('_lastWeeklySummary');
+    if (lastSent === weekKey) return;
+    config.set('_lastWeeklySummary', weekKey);
+
+    const acc = config.getActiveAccount();
+    if (!acc) return;
+    const hist = usageHistoryByAccount[acc.orgId] || [];
+    if (hist.length < 2) return;
+
+    const avg = Math.round(hist.reduce((a, b) => a + b, 0) / hist.length);
+    const peak = Math.max(...hist);
+    const latest = hist[hist.length - 1];
+    const msg = [
+      `📊 Weekly Usage Summary — ${acc.alias || acc.orgName}`,
+      `Current: ${latest}%  |  Average: ${avg}%  |  Peak: ${peak}%`,
+      `Data points: ${hist.length}`,
+    ].join('\n');
+    sendTelegramNotification(msg);
+    addLog('INFO', 'Weekly summary sent to Telegram.');
+  }, 60 * 60 * 1000); // check hourly
 }
 
 // ── Browser login ─────────────────────────────────────────────────────────
@@ -492,7 +651,7 @@ function startBrowserLogin(resolve) {
 function addLog(level, msg) {
   const entry = { ts: new Date().toISOString(), level, msg };
   logs.push(entry);
-  if (logs.length > 500) logs.shift();
+  if (logs.length > MAX_LOG_ENTRIES) logs.shift();
 }
 
 // ── Settings schema — allowlist for save-settings IPC (MED-4) ─────────────
@@ -513,6 +672,11 @@ const SETTINGS_SCHEMA = {
   checkUpdates:       v => typeof v === 'boolean',
   updateRepo:         v => typeof v === 'string' && (v === '' || /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(v)),
   activeAccountIndex: v => Number.isInteger(v) && v >= 0,
+  showRemainingMode:  v => typeof v === 'boolean',
+  notificationsPausedUntil: v => typeof v === 'number' && v >= 0,
+  compactMode: v => typeof v === 'boolean',
+  globalHotkey: v => typeof v === 'string' && v.length <= 50,
+  pinPopup: v => typeof v === 'boolean',
 };
 
 // ── IPC handlers ──────────────────────────────────────────────────────────
@@ -527,6 +691,35 @@ ipcMain.on('open-settings', () => openSettings());
 ipcMain.on('show-context-menu', () => tray.popUpContextMenu(buildContextMenu()));
 ipcMain.on('hide-popup', () => {
   if (popupWin && !popupWin.isDestroyed()) popupWin.hide();
+});
+
+ipcMain.on('set-show-remaining', (_e, val) => {
+  if (typeof val === 'boolean') config.set('showRemainingMode', val);
+});
+
+ipcMain.on('set-pin-popup', (_e, val) => {
+  if (typeof val === 'boolean') {
+    config.set('pinPopup', val);
+    if (popupWin?.isVisible()) sendStateToPopup();
+  }
+});
+
+ipcMain.on('set-compact-mode', (_e, val) => {
+  if (typeof val === 'boolean') {
+    config.set('compactMode', val);
+    if (popupWin?.isVisible()) sendStateToPopup();
+  }
+});
+
+ipcMain.on('pause-notifications', (_e, durationMs) => {
+  if (typeof durationMs === 'number' && durationMs > 0 && durationMs <= 14400000) { // max 4h
+    config.set('notificationsPausedUntil', Date.now() + durationMs);
+    addLog('INFO', `Notifications paused for ${Math.round(durationMs / 60000)} minutes.`);
+  } else if (durationMs === 0) {
+    config.set('notificationsPausedUntil', 0);
+    addLog('INFO', 'Notifications resumed.');
+  }
+  if (popupWin?.isVisible()) sendStateToPopup();
 });
 
 ipcMain.on('settings-ready', e => {
@@ -587,10 +780,13 @@ ipcMain.on('save-settings', (_e, { settings: newSettings, accounts }) => {
   app.setLoginItemSettings({ openAtLogin: newSettings.launchAtLogin });
 
   nativeTheme.themeSource = newSettings.theme || 'system';
+  registerGlobalHotkey(); // re-register in case hotkey changed
   clearCache(); // invalidate icon cache when display settings may have changed (H2)
   updateTrayIcon(); // apply new display mode immediately without waiting for network
   if (settingsWin && !settingsWin.isDestroyed()) settingsWin.close();
-  forceRefresh(); // always refresh after saving (C2)
+  // Debounced refresh after save — avoids hammering API on rapid settings changes
+  if (refreshTimer) clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(() => forceRefresh(), 500);
 });
 
 ipcMain.on('close-settings', () => {
@@ -600,12 +796,12 @@ ipcMain.on('close-settings', () => {
 ipcMain.on('reset-all', () => {
   const n = config.getAccounts().length;
   for (let i = n - 1; i >= 0; i--) config.removeAccount(i);
-  notified90.clear();
+  Object.keys(accountNotifyState).forEach(k => delete accountNotifyState[k]);
   if (settingsWin && !settingsWin.isDestroyed()) settingsWin.close();
   usageData = null;
   lastError = null;
   lastRefreshTime = 0;
-  usageHistory = [];
+  Object.keys(usageHistoryByAccount).forEach(k => delete usageHistoryByAccount[k]);
   updateTrayIcon();
   openSettings();
 });

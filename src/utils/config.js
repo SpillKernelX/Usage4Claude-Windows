@@ -19,6 +19,11 @@ const store = new Store({
     mutedLimits: [],          // per-limit mute: subset of ['5h','7d','opus','sonnet']
     telegramBotToken: '',
     telegramChatId: '',
+    showRemainingMode: false,
+    notificationsPausedUntil: 0, // timestamp — notifications silenced until this time
+    compactMode: false,          // compact popup: ring + % only, expandable
+    globalHotkey: 'Ctrl+Shift+U', // global shortcut to toggle popup
+    pinPopup: false,              // keep popup visible until manually closed
   }
 });
 

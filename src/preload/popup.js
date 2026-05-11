@@ -12,4 +12,8 @@ contextBridge.exposeInMainWorld('api', {
   openLogs:        ()   => ipcRenderer.send('open-logs'),
   showContextMenu: ()   => ipcRenderer.send('show-context-menu'),
   hidePopup:       ()   => ipcRenderer.send('hide-popup'),
+  setShowRemaining:(val) => ipcRenderer.send('set-show-remaining', !!val),
+  pauseNotifications:(ms) => ipcRenderer.send('pause-notifications', ms),
+  setCompactMode:  (val) => ipcRenderer.send('set-compact-mode', !!val),
+  setPinPopup:     (val) => ipcRenderer.send('set-pin-popup', !!val),
 });

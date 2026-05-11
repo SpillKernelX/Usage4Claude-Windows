@@ -1,5 +1,19 @@
 const BASE = 'https://claude.ai/api/organizations';
 
+const MAX_RETRIES = 3;
+const RETRY_DELAYS = [1000, 2000, 4000]; // exponential backoff
+
+async function fetchWithRetry(url, opts) {
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const res = await fetch(url, opts);
+    if (res.status === 429 && attempt < MAX_RETRIES) {
+      await new Promise(r => setTimeout(r, RETRY_DELAYS[attempt]));
+      continue;
+    }
+    return res;
+  }
+}
+
 function headers(sessionKey) {
   return {
     'accept': '*/*',
@@ -43,7 +57,7 @@ async function checkResponse(res, label) {
 }
 
 async function fetchOrganizations(sessionKey) {
-  const res = await fetch('https://claude.ai/api/organizations', { headers: headers(sessionKey) });
+  const res = await fetchWithRetry('https://claude.ai/api/organizations', { headers: headers(sessionKey) });
   const data = await checkResponse(res, 'organizations');
   return data
     .filter(o => o.uuid || o.id) // L5: skip orgs with no usable identifier
@@ -53,8 +67,8 @@ async function fetchOrganizations(sessionKey) {
 async function fetchUsage(sessionKey, orgId) {
   if (!orgId || !/^[0-9a-f-]{36}$/i.test(orgId)) throw new Error('Invalid organisation ID');
   const [usageRes, extraRes] = await Promise.allSettled([
-    fetch(`${BASE}/${orgId}/usage`, { headers: headers(sessionKey) }),
-    fetch(`${BASE}/${orgId}/overage_spend_limit`, { headers: headers(sessionKey) }),
+    fetchWithRetry(`${BASE}/${orgId}/usage`, { headers: headers(sessionKey) }),
+    fetchWithRetry(`${BASE}/${orgId}/overage_spend_limit`, { headers: headers(sessionKey) }),
   ]);
 
   if (usageRes.status === 'rejected') throw new Error('Network error');
@@ -70,13 +84,18 @@ async function fetchUsage(sessionKey, orgId) {
     if (er.ok) {
       try {
         const ed = JSON.parse(await er.text());
-        const limitCents = ed.spend_limit_amount_cents;
-        if (limitCents > 0) {
+        // New API fields with fallback to legacy names (upstream v2.6.0 fix)
+        const limitCents = ed.monthly_credit_limit ?? ed.spend_limit_amount_cents;
+        const usedCents  = ed.used_credits ?? ed.balance_cents ?? 0;
+        const currency   = (ed.currency ?? ed.spend_limit_currency ?? 'usd').toUpperCase();
+        const enabled    = ed.is_enabled ?? (limitCents > 0);
+        if (enabled && limitCents > 0) {
           extra = {
             enabled: true,
-            used: (ed.balance_cents || 0) / 100,
+            used: usedCents / 100,
             limit: limitCents / 100,
-            currency: (ed.spend_limit_currency || 'usd').toUpperCase(),
+            currency,
+            outOfCredits: ed.out_of_credits || false,
           };
         } else {
           extra = { enabled: false };
