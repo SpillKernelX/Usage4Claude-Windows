@@ -93,18 +93,31 @@ function renderAccountList() {
   container.innerHTML = '';
   accounts.forEach((acc, i) => {
     const isActive = i === activeIdx;
+    // An imported account has no encryptedKey — it can't be used until the
+    // user re-authenticates via Browser Login. addAccount() in main matches
+    // on orgId and updates this entry in place, so the alias is preserved.
+    const needsReauth = !acc.encryptedKey;
     // Escape user/API-sourced strings before inserting into HTML (HIGH-3)
     const displayName = escapeHtml(acc.alias || acc.orgName || 'Account ' + (i + 1));
     const orgName     = escapeHtml(acc.orgName);
+    const subline     = needsReauth
+      ? `${orgName ? orgName + ' — ' : ''}<span style="color:#f59e0b">re-auth required</span>`
+      : orgName;
+
+    let statusEl;
+    if (needsReauth)        statusEl = '<span style="font-size:11px;color:#f59e0b">Re-auth needed</span>';
+    else if (isActive)      statusEl = '<span style="font-size:11px;color:var(--accent)">Active</span>';
+    else                    statusEl = `<button class="btn btn-secondary" data-switch="${i}" style="padding:5px 10px;font-size:12px">Switch</button>`;
+
     const div = document.createElement('div');
     div.className = 'account-item';
     div.innerHTML = `
       <div class="account-dot ${isActive ? '' : 'inactive'}"></div>
       <div class="account-info">
         <div class="account-name">${displayName}</div>
-        <div class="account-org">${orgName}</div>
+        <div class="account-org">${subline}</div>
       </div>
-      ${!isActive ? `<button class="btn btn-secondary" data-switch="${i}" style="padding:5px 10px;font-size:12px">Switch</button>` : '<span style="font-size:11px;color:var(--accent)">Active</span>'}
+      ${statusEl}
       <button class="btn btn-danger" data-remove="${i}" style="padding:5px 10px;font-size:12px">Remove</button>
     `;
     container.appendChild(div);
@@ -288,11 +301,17 @@ document.getElementById('exportBtn').addEventListener('click', async () => {
 
 document.getElementById('importBtn').addEventListener('click', async () => {
   const result = await window.api.importSettings();
-  if (result.ok) {
-    setStatus('backupStatus', 'Settings imported. Restart app to apply all changes.', 'ok');
-  } else if (result.error) {
+  if (result.canceled) return;
+  if (result.error) {
     setStatus('backupStatus', 'Import failed: ' + result.error, 'err');
+    return;
   }
+  const parts = [];
+  if (result.settingsApplied)  parts.push(`${result.settingsApplied} setting${result.settingsApplied === 1 ? '' : 's'}`);
+  if (result.settingsSkipped)  parts.push(`${result.settingsSkipped} skipped`);
+  if (result.accountsImported) parts.push(`${result.accountsImported} account${result.accountsImported === 1 ? '' : 's'} (re-auth via Browser Login)`);
+  setStatus('backupStatus', `Imported: ${parts.join(', ') || 'nothing'}`, 'ok');
+  // Main re-sends 'init' after a successful import, which repopulates the UI.
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────

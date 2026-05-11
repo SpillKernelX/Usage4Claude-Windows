@@ -45,7 +45,7 @@ function getNotifyState(orgId) {
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
-const CURRENT_VERSION = '1.0.1';
+const CURRENT_VERSION = '1.0.2';
 const MAX_HISTORY = 30;             // sparkline data points
 const DEBOUNCE_MS = 10_000;         // minimum interval between manual refreshes
 const MAX_LOG_ENTRIES = 500;        // circular log buffer size
@@ -880,12 +880,51 @@ ipcMain.handle('import-settings', async () => {
     const raw = fs.readFileSync(result.filePaths[0], 'utf-8');
     const data = JSON.parse(raw);
     if (!data.settings) return { error: 'Invalid settings file — missing settings object.' };
-    // Apply settings through schema validation
-    Object.entries(data.settings).forEach(([k, v]) => {
-      if (SETTINGS_SCHEMA[k]?.(v)) config.set(k, v);
-    });
-    addLog('INFO', `Settings imported from ${result.filePaths[0]}`);
-    return { ok: true };
+
+    // Apply settings via schema allowlist; count what we applied vs skipped
+    let settingsApplied = 0, settingsSkipped = 0;
+    for (const [k, v] of Object.entries(data.settings)) {
+      if (SETTINGS_SCHEMA[k]?.(v)) { config.set(k, v); settingsApplied++; }
+      else                          { settingsSkipped++; }
+    }
+
+    // Import account metadata (orgId/orgName/alias). Session keys are intentionally
+    // never in the export file — DPAPI ciphertext is per-machine and wouldn't
+    // decrypt elsewhere. Each imported account shows "Re-auth needed" in the
+    // Settings UI until the user logs in via Browser Login, at which point
+    // addAccount() updates the existing entry in place (matches on orgId).
+    let accountsImported = 0;
+    if (Array.isArray(data.accounts)) {
+      const imported = data.accounts
+        .filter(a => a && typeof a.orgId === 'string' && /^[0-9a-f-]{36}$/i.test(a.orgId))
+        .map(a => ({
+          id: typeof a.id === 'string' && a.id ? a.id
+            : Date.now().toString(36) + Math.random().toString(36).slice(2),
+          alias:   typeof a.alias   === 'string' ? a.alias   : '',
+          orgId:   a.orgId,
+          orgName: typeof a.orgName === 'string' ? a.orgName : '',
+          // No encryptedKey — re-auth required on this machine
+        }));
+      config.set('accounts', imported);
+      const wantedIdx = Number.isInteger(data.settings.activeAccountIndex) ? data.settings.activeAccountIndex : 0;
+      config.set('activeAccountIndex', Math.min(wantedIdx, Math.max(0, imported.length - 1)));
+      accountsImported = imported.length;
+    }
+
+    addLog('INFO',
+      `Settings imported from ${result.filePaths[0]} — ` +
+      `${settingsApplied} settings applied, ${settingsSkipped} skipped, ${accountsImported} accounts (re-auth required).`);
+
+    // Send fresh init payload so the renderer doesn't need a restart
+    if (settingsWin && !settingsWin.isDestroyed()) {
+      const { accounts: rawAccounts, ...settings } = config.getAll();
+      const accounts = rawAccounts.map(({ encryptedKey: _, ...rest }) => rest);
+      settingsWin.webContents.send('init', { settings, accounts });
+    }
+    // Re-render tray icon since active account / settings may have changed
+    forceRefresh();
+
+    return { ok: true, settingsApplied, settingsSkipped, accountsImported };
   } catch (e) {
     return { error: e.message };
   }

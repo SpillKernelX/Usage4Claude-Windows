@@ -55,6 +55,20 @@ function getSessionKey(account) {
 
 function addAccount({ sessionKey, orgId, orgName, alias = '' }) {
   const accounts = getAccounts();
+
+  // Re-auth case: an account with this orgId already exists (e.g. imported from
+  // another machine without its session key). Update the existing entry in place
+  // so we don't duplicate, and preserve the user's alias unless they explicitly
+  // set a new one during the login flow.
+  const existingIdx = accounts.findIndex(a => a.orgId === orgId);
+  if (existingIdx >= 0) {
+    accounts[existingIdx].encryptedKey = encryptKey(sessionKey);
+    if (orgName) accounts[existingIdx].orgName = orgName;
+    if (alias)   accounts[existingIdx].alias   = alias;
+    store.set('accounts', accounts);
+    return accounts[existingIdx];
+  }
+
   const account = {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2),
     alias,
