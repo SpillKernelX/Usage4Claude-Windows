@@ -19,22 +19,33 @@ A Windows system tray app that monitors your Claude AI subscription quota in rea
 - **Smart refresh** — speeds up automatically when usage is high or reset is near
 - **Notifications** — alerts at 90% usage and when your quota resets
 - **Three icon modes** — combined ring+number, number only, ring only
+- **Auto-updates** — new versions download in the background; restart to install
 - **Windows DPAPI** — session keys encrypted at rest via Windows credential store
 
 ---
 
 ## Installation
 
-### Option A — Download installer
-Download the latest `.exe` from [Releases](https://github.com/SpillKernelX/Usage4Claude-Windows/releases/latest) and run it.
+### Option A — Download installer (recommended)
+
+1. Download `Usage4Claude.Setup.<version>.exe` from the [latest release](https://github.com/SpillKernelX/Usage4Claude-Windows/releases/latest).
+2. Double-click to run it. The installer is unsigned, so Windows SmartScreen
+   will show **"Windows protected your PC"** on first run — click **More info → Run anyway**
+   to proceed. This is the standard friction for indie apps without a paid code-signing certificate.
+3. Once installed, future versions download automatically. When an update is
+   ready, the tray menu shows **Restart to install vX.Y.Z** — pick that, or
+   quit the app and reopen to apply.
 
 ### Option B — Run from source
+
 ```bash
 git clone https://github.com/SpillKernelX/Usage4Claude-Windows.git
 cd Usage4Claude-Windows
 npm install
 npm start
 ```
+
+Source builds don't auto-update — `git pull && npm start` to refresh.
 
 ---
 
